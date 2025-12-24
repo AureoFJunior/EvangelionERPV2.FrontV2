@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
+import { useResponsive } from '../hooks/useResponsive';
 
 export function Customers() {
   const { colors } = useTheme();
+  const { isCompact, contentPadding } = useResponsive();
   const [searchTerm, setSearchTerm] = useState('');
 
   const customers = [
@@ -35,38 +37,64 @@ export function Customers() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
-      <View style={styles.content}>
+      <View style={[styles.content, { padding: contentPadding }]}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.neonGreen }]}>CUSTOMER MANAGEMENT</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
+            CUSTOMER MANAGEMENT
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
             Track and manage customer relationships
           </Text>
           <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
         </View>
 
         {/* Stats */}
-        <View style={styles.statsContainer}>
-          <View style={[styles.statBox, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+        <View style={[styles.statsContainer, isCompact && styles.statsContainerCompact]}>
+          <View
+            style={[
+              styles.statBox,
+              { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+              isCompact && styles.statBoxCompact,
+            ]}
+          >
             <Text style={[styles.statValue, { color: colors.textPrimary }]}>{customers.length}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total Customers</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }, isCompact && styles.statLabelCompact]}>
+              Total Customers
+            </Text>
           </View>
-          <View style={[styles.statBox, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+          <View
+            style={[
+              styles.statBox,
+              { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+              isCompact && styles.statBoxCompact,
+            ]}
+          >
             <Text style={[styles.statValue, { color: colors.textPrimary }]}>
               {customers.filter(c => c.status === 'VIP').length}
             </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>VIP</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }, isCompact && styles.statLabelCompact]}>
+              VIP
+            </Text>
           </View>
-          <View style={[styles.statBox, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+          <View
+            style={[
+              styles.statBox,
+              { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+              isCompact && styles.statBoxCompact,
+            ]}
+          >
             <Text style={[styles.statValue, { color: colors.textPrimary }]}>
               {customers.filter(c => c.status === 'New').length}
             </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>New</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }, isCompact && styles.statLabelCompact]}>
+              New
+            </Text>
           </View>
         </View>
 
         {/* Search and Add */}
-        <View style={styles.actionRow}>
+        <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
           <View style={[styles.searchContainer, { backgroundColor: colors.inputBgFrom, borderColor: colors.cardBorder }]}>
             <Feather name="search" size={20} color={colors.primaryPurple} />
             <TextInput
@@ -77,7 +105,7 @@ export function Customers() {
               onChangeText={setSearchTerm}
             />
           </View>
-          <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primaryPurple }]}>
+          <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primaryPurple }, isCompact && styles.addButtonCompact]}>
             <Feather name="plus" size={20} color={colors.neonGreen} />
           </TouchableOpacity>
         </View>
@@ -89,7 +117,7 @@ export function Customers() {
               key={customer.id}
               style={[styles.customerCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
             >
-              <View style={styles.customerHeader}>
+              <View style={[styles.customerHeader, isCompact && styles.customerHeaderCompact]}>
                 <View style={[styles.avatar, { backgroundColor: colors.primaryPurple }]}>
                   <Text style={[styles.avatarText, { color: colors.neonGreen }]}>
                     {customer.name.charAt(0)}
@@ -109,7 +137,7 @@ export function Customers() {
                 </View>
               </View>
 
-              <View style={styles.customerStats}>
+              <View style={[styles.customerStats, isCompact && styles.customerStatsCompact]}>
                 <View style={styles.statItem}>
                   <Feather name="shopping-bag" size={16} color={colors.primaryPurple} />
                   <Text style={[styles.statItemText, { color: colors.textSecondary }]}>
@@ -147,9 +175,16 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginBottom: 8,
   },
+  titleCompact: {
+    fontSize: 22,
+    letterSpacing: 1.4,
+  },
   subtitle: {
     fontSize: 14,
     marginBottom: 8,
+  },
+  subtitleCompact: {
+    fontSize: 12,
   },
   headerLine: {
     height: 4,
@@ -160,6 +195,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 24,
+    flexWrap: 'wrap',
+  },
+  statsContainerCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 10,
   },
   statBox: {
     flex: 1,
@@ -167,6 +208,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 2,
     alignItems: 'center',
+  },
+  statBoxCompact: {
+    width: '100%',
+    flex: 0,
+    alignItems: 'flex-start',
+    minHeight: 72,
   },
   statValue: {
     fontSize: 24,
@@ -176,10 +223,18 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 12,
   },
+  statLabelCompact: {
+    textAlign: 'left',
+    width: '100%',
+  },
   actionRow: {
     flexDirection: 'row',
     gap: 12,
     marginBottom: 24,
+  },
+  actionRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
   },
   searchContainer: {
     flex: 1,
@@ -202,6 +257,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  addButtonCompact: {
+    width: '100%',
+    height: 44,
+    borderRadius: 10,
+  },
   customerList: {
     gap: 16,
   },
@@ -215,6 +275,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     marginBottom: 12,
+  },
+  customerHeaderCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
   },
   avatar: {
     width: 48,
@@ -255,6 +319,10 @@ const styles = StyleSheet.create({
   customerStats: {
     flexDirection: 'row',
     gap: 16,
+  },
+  customerStatsCompact: {
+    flexDirection: 'column',
+    gap: 8,
   },
   statItem: {
     flexDirection: 'row',

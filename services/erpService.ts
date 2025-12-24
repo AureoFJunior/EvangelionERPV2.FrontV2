@@ -1,7 +1,7 @@
 import { ApiClient } from './apiClient';
 
 export interface Product {
-  id: number;
+  id: string | number;
   name: string;
   category: string;
   price?: number;
@@ -9,6 +9,17 @@ export interface Product {
   defaultValue?: number;
   storageQuantity?: number;
   status: string;
+  description?: string;
+  pictureAddress?: string;
+  pictureAdress?: string;
+  isActive?: boolean;
+  unitOfMeasure?: string;
+  isExternal?: boolean;
+  isService?: boolean;
+  enterpriseId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  orderedProduct?: unknown[];
 }
 
 export interface Order {
@@ -90,6 +101,30 @@ export class ErpService {
       };
     }
     return response;
+  }
+
+  async updateProduct(product: Product) {
+    return this.client.request<Product, Product>({
+      path: '/Product/UpdateProduct',
+      method: 'PUT',
+      body: product,
+    });
+  }
+
+  async createProduct(payload: { product: Product; file?: string }) {
+    return this.client.request<Product, { product: Product; file?: string }>({
+      path: '/Product/AddProduct',
+      method: 'POST',
+      body: payload,
+    });
+  }
+
+  async deleteProduct(id: string | number) {
+    return this.client.request<void>({
+      path: '/Product/DeleteProduct',
+      method: 'DELETE',
+      query: { id },
+    });
   }
 
   fetchReports() {

@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Image } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
+import { useResponsive } from '../hooks/useResponsive';
 
 export function Employees() {
   const { colors } = useTheme();
+  const { isCompact, contentPadding } = useResponsive();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDepartment, setFilterDepartment] = useState('all');
 
@@ -67,11 +69,13 @@ export function Employees() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
-      <View style={styles.content}>
+      <View style={[styles.content, { padding: contentPadding }]}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.neonGreen }]}>EMPLOYEE MANAGEMENT</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
+            EMPLOYEE MANAGEMENT
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
             Manage NERV personnel and team members
           </Text>
           <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
@@ -104,7 +108,7 @@ export function Employees() {
         </ScrollView>
 
         {/* Search and Add */}
-        <View style={styles.actionRow}>
+        <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
           <View style={[styles.searchContainer, { backgroundColor: colors.inputBgFrom, borderColor: colors.cardBorder }]}>
             <Feather name="search" size={20} color={colors.primaryPurple} />
             <TextInput
@@ -115,7 +119,7 @@ export function Employees() {
               onChangeText={setSearchTerm}
             />
           </View>
-          <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primaryPurple }]}>
+          <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primaryPurple }, isCompact && styles.addButtonCompact]}>
             <Feather name="plus" size={20} color={colors.neonGreen} />
           </TouchableOpacity>
         </View>
@@ -128,7 +132,10 @@ export function Employees() {
               style={[styles.employeeCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
             >
               <View style={styles.employeeHeader}>
-                <Image source={{ uri: employee.image }} style={[styles.photo, { borderColor: colors.neonGreen }]} />
+                <Image
+                  source={{ uri: employee.image }}
+                  style={[styles.photo, { borderColor: colors.neonGreen }, isCompact && styles.photoCompact]}
+                />
                 <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, borderColor: colors.cardBgFrom }]} />
               </View>
 
@@ -189,9 +196,16 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginBottom: 8,
   },
+  titleCompact: {
+    fontSize: 22,
+    letterSpacing: 1.4,
+  },
   subtitle: {
     fontSize: 14,
     marginBottom: 8,
+  },
+  subtitleCompact: {
+    fontSize: 12,
   },
   headerLine: {
     height: 4,
@@ -217,6 +231,10 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 24,
   },
+  actionRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
   searchContainer: {
     flex: 1,
     flexDirection: 'row',
@@ -238,6 +256,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  addButtonCompact: {
+    width: '100%',
+    height: 44,
+    borderRadius: 10,
+  },
   employeeList: {
     gap: 16,
   },
@@ -256,6 +279,11 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     borderWidth: 3,
+  },
+  photoCompact: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
   },
   statusDot: {
     position: 'absolute',

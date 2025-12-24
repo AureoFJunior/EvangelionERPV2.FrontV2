@@ -56,18 +56,27 @@ export class ApiClient {
       const response = await fetch(url, init);
       const parsed = await this.parseResponse<TResponse>(response);
 
+      const fallbackError = response.ok
+        ? undefined
+        : `Failed to sync (status ${response.status})`;
+      const stringError =
+        !response.ok && typeof parsed.data === 'string' && parsed.data
+          ? `${parsed.data} (status ${response.status})`
+          : undefined;
+
       const apiResponse: ApiResponse<TResponse> = {
         data: parsed.data,
         ok: response.ok,
         status: response.status,
-        error: parsed.error ?? (!response.ok ? `Request failed with status ${response.status}` : undefined),
+        error: parsed.error ?? stringError ?? fallbackError,
         headers: this.headersToRecord(response.headers),
       };
 
       return apiResponse;
     } catch (error: any) {
       const isAbort = error?.name === 'AbortError';
-      const message = isAbort ? 'Request timed out' : error?.message ?? 'Request failed';
+      const baseMessage = isAbort ? 'Request timed out' : 'Failed to sync';
+      const message = `${baseMessage} (status 0)`;
       return {
         data: null,
         ok: false,

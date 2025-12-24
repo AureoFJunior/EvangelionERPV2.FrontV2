@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ErpService, Report as ReportModel } from '../services/erpService';
+import { NervLoader } from './NervLoader';
+import { useResponsive } from '../hooks/useResponsive';
 
 export function Reports() {
   const { colors } = useTheme();
   const { client, isAuthenticated, loading: authLoading } = useAuth();
   const erpService = useMemo(() => new ErpService(client), [client]);
+  const { isCompact, contentPadding } = useResponsive();
   const [reports, setReports] = useState<ReportModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -71,13 +74,25 @@ export function Reports() {
     { label: 'Generated Today', value: String(reportsToday), icon: 'activity', color: colors.accentOrange },
   ];
 
+  if (loading) {
+    return (
+      <NervLoader
+        fullScreen
+        label="Synchronizing EVA-01"
+        subtitle="LCL circulation nominal | Loading reports..."
+      />
+    );
+  }
+
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
-      <View style={styles.content}>
+      <View style={[styles.content, { padding: contentPadding }]}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.neonGreen }]}>REPORTS & ANALYTICS</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
+            REPORTS & ANALYTICS
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
             Generate and view business intelligence reports
           </Text>
           <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
@@ -97,13 +112,6 @@ export function Reports() {
           </View>
         )}
 
-        {loading && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator color={colors.neonGreen} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading reports...</Text>
-          </View>
-        )}
-
         {!loading && reports.length === 0 && (
           <View style={[styles.emptyState, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
             <Feather name="file-text" size={20} color={colors.textMuted} />
@@ -115,11 +123,15 @@ export function Reports() {
         )}
 
         {/* Quick Stats */}
-        <View style={styles.statsContainer}>
+        <View style={[styles.statsContainer, isCompact && styles.statsContainerCompact]}>
           {quickStats.map((stat, index) => (
             <View
               key={index}
-              style={[styles.statCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
+              style={[
+                styles.statCard,
+                { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+                isCompact && styles.statCardCompact,
+              ]}
             >
               <View style={[styles.statIcon, { backgroundColor: `${stat.color}20` }]}>
                 <Feather name={stat.icon as any} size={24} color={stat.color} />
@@ -168,7 +180,7 @@ export function Reports() {
                 </View>
               </View>
 
-              <View style={styles.reportActions}>
+              <View style={[styles.reportActions, isCompact && styles.reportActionsCompact]}>
                 <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primaryPurple }]}>
                   <Feather name="eye" size={16} color={colors.neonGreen} />
                   <Text style={[styles.actionButtonText, { color: colors.neonGreen }]}>View</Text>
@@ -204,9 +216,16 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginBottom: 8,
   },
+  titleCompact: {
+    fontSize: 22,
+    letterSpacing: 1.4,
+  },
   subtitle: {
     fontSize: 14,
     marginBottom: 8,
+  },
+  subtitleCompact: {
+    fontSize: 12,
   },
   headerLine: {
     height: 4,
@@ -221,16 +240,6 @@ const styles = StyleSheet.create({
   },
   bannerText: {
     fontSize: 12,
-  },
-  loadingText: {
-    fontSize: 12,
-    marginLeft: 8,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
   },
   emptyState: {
     borderWidth: 1,
@@ -252,6 +261,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 24,
+    flexWrap: 'wrap',
+  },
+  statsContainerCompact: {
+    flexDirection: 'column',
   },
   statCard: {
     flex: 1,
@@ -264,6 +277,10 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
+  },
+  statCardCompact: {
+    width: '100%',
+    flex: 0,
   },
   statIcon: {
     padding: 12,
@@ -337,6 +354,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 16,
     marginBottom: 12,
+    flexWrap: 'wrap',
+    rowGap: 8,
   },
   metaItem: {
     flexDirection: 'row',
@@ -349,6 +368,10 @@ const styles = StyleSheet.create({
   reportActions: {
     flexDirection: 'row',
     gap: 12,
+  },
+  reportActionsCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
   },
   actionButton: {
     flex: 1,

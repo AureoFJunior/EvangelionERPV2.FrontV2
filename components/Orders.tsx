@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ErpService, Order as OrderModel } from '../services/erpService';
+import { NervLoader } from './NervLoader';
+import { useResponsive } from '../hooks/useResponsive';
 
 const statuses = ['all', 'Pending', 'Processing', 'Shipped', 'Delivered'];
 
@@ -11,6 +13,7 @@ export function Orders() {
   const { colors } = useTheme();
   const { client, isAuthenticated, loading: authLoading } = useAuth();
   const erpService = useMemo(() => new ErpService(client), [client]);
+  const { isCompact, contentPadding } = useResponsive();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [orders, setOrders] = useState<OrderModel[]>([]);
@@ -50,10 +53,17 @@ export function Orders() {
   }, [erpService, isAuthenticated, authLoading]);
 
   const filteredOrders = orders.filter((order) => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const customer = (order.customer ?? '').toLowerCase();
+    const idString = (order.id ?? '').toString();
+    const statusValue = (order.status ?? '').toLowerCase();
+
     const matchesSearch =
-      order.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.id.toString().includes(searchTerm);
-    const matchesStatus = filterStatus === 'all' || order.status === filterStatus;
+      normalizedSearch.length === 0 ||
+      customer.includes(normalizedSearch) ||
+      idString.includes(normalizedSearch);
+    const matchesStatus =
+      filterStatus === 'all' || statusValue === filterStatus.toLowerCase();
     return matchesSearch && matchesStatus;
   });
 
@@ -72,13 +82,25 @@ export function Orders() {
     }
   };
 
+  if (loading) {
+    return (
+      <NervLoader
+        fullScreen
+        label="Synchronizing EVA-01"
+        subtitle="LCL circulation nominal | Loading orders..."
+      />
+    );
+  }
+
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
-      <View style={styles.content}>
+      <View style={[styles.content, { padding: contentPadding }]}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.neonGreen }]}>ORDER TRACKING</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
+            ORDER TRACKING
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
             Monitor and manage customer orders
           </Text>
           <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
@@ -95,13 +117,6 @@ export function Orders() {
         {errorMessage && (
           <View style={[styles.banner, { backgroundColor: `${colors.accentOrange}20`, borderColor: colors.accentOrange }]}>
             <Text style={[styles.bannerText, { color: colors.accentOrange }]}>{errorMessage}</Text>
-          </View>
-        )}
-
-        {loading && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator color={colors.neonGreen} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading orders...</Text>
           </View>
         )}
 
@@ -157,47 +172,56 @@ export function Orders() {
 
         {/* Order List */}
         <View style={styles.orderList}>
-          {filteredOrders.map((order) => (
-            <View
-              key={order.id}
-              style={[styles.orderCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-            >
-              <View style={styles.orderHeader}>
-                <View style={styles.orderIdContainer}>
-                  <Text style={[styles.orderLabel, { color: colors.textMuted }]}>Order</Text>
-                  <Text style={[styles.orderId, { color: colors.neonGreen }]}>#{order.id}</Text>
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(order.status)}20` }]}>
-                  <Text style={[styles.statusText, { color: getStatusColor(order.status) }]}>{order.status}</Text>
-                </View>
-              </View>
+          {filteredOrders.map((order) => {
+            const safeId = order.id ?? '-';
+            const safeStatus = order.status ?? 'Pending';
+            const safeCustomer = order.customer ?? 'Unknown customer';
+            const safeDate = order.date ?? '--';
+            const safeItems = order.items ?? 0;
+            const safeTotal = typeof order.total === 'number' ? order.total : 0;
 
-              <View style={styles.orderDetails}>
-                <View style={styles.detailRow}>
-                  <Feather name="user" size={16} color={colors.primaryPurple} />
-                  <Text style={[styles.detailText, { color: colors.textSecondary }]}>{order.customer}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Feather name="calendar" size={16} color={colors.primaryPurple} />
-                  <Text style={[styles.detailText, { color: colors.textSecondary }]}>{order.date}</Text>
-                </View>
-              </View>
-
-              <View style={styles.orderFooter}>
-                <View style={styles.detailRow}>
-                  <Feather name="package" size={16} color={colors.textMuted} />
-                  <Text style={[styles.detailText, { color: colors.textMuted }]}>{order.items} items</Text>
-                </View>
-                <Text style={[styles.orderTotal, { color: colors.textPrimary }]}>${order.total.toFixed(2)}</Text>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.viewButton, { backgroundColor: colors.primaryPurple }]}
+            return (
+              <View
+                key={safeId}
+                style={[styles.orderCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
               >
-                <Text style={[styles.viewButtonText, { color: colors.neonGreen }]}>View Details</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
+                <View style={[styles.orderHeader, isCompact && styles.orderHeaderCompact]}>
+                  <View style={styles.orderIdContainer}>
+                    <Text style={[styles.orderLabel, { color: colors.textMuted }]}>Order</Text>
+                    <Text style={[styles.orderId, { color: colors.neonGreen }]}>#{safeId}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(safeStatus)}20` }]}>
+                    <Text style={[styles.statusText, { color: getStatusColor(safeStatus) }]}>{safeStatus}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.orderDetails}>
+                  <View style={styles.detailRow}>
+                    <Feather name="user" size={16} color={colors.primaryPurple} />
+                    <Text style={[styles.detailText, { color: colors.textSecondary }]}>{safeCustomer}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Feather name="calendar" size={16} color={colors.primaryPurple} />
+                    <Text style={[styles.detailText, { color: colors.textSecondary }]}>{safeDate}</Text>
+                  </View>
+                </View>
+
+                <View style={[styles.orderFooter, isCompact && styles.orderFooterCompact]}>
+                  <View style={styles.detailRow}>
+                    <Feather name="package" size={16} color={colors.textMuted} />
+                    <Text style={[styles.detailText, { color: colors.textMuted }]}>{safeItems} items</Text>
+                  </View>
+                  <Text style={[styles.orderTotal, { color: colors.textPrimary }]}>${safeTotal.toFixed(2)}</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.viewButton, { backgroundColor: colors.primaryPurple }]}
+                >
+                  <Text style={[styles.viewButtonText, { color: colors.neonGreen }]}>View Details</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
         </View>
       </View>
     </ScrollView>
@@ -220,9 +244,16 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginBottom: 8,
   },
+  titleCompact: {
+    fontSize: 22,
+    letterSpacing: 1.4,
+  },
   subtitle: {
     fontSize: 14,
     marginBottom: 8,
+  },
+  subtitleCompact: {
+    fontSize: 12,
   },
   headerLine: {
     height: 4,
@@ -237,16 +268,6 @@ const styles = StyleSheet.create({
   },
   bannerText: {
     fontSize: 12,
-  },
-  loadingText: {
-    fontSize: 12,
-    marginLeft: 8,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
   },
   emptyState: {
     borderWidth: 1,
@@ -313,6 +334,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  orderHeaderCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
   orderIdContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -354,6 +380,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: 'rgba(127, 63, 242, 0.2)',
+  },
+  orderFooterCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 8,
   },
   orderTotal: {
     fontSize: 20,
