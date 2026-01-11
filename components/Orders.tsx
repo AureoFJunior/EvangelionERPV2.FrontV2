@@ -19,6 +19,9 @@ export function Orders() {
   const [orders, setOrders] = useState<OrderModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pageNumber, setPageNumber] = useState(1);
+  const [pageSize] = useState(50);
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated || authLoading) {
@@ -31,13 +34,14 @@ export function Orders() {
       setLoading(true);
       setErrorMessage(null);
 
-      const response = await erpService.fetchOrders();
+      const response = await erpService.fetchOrders(pageNumber, pageSize);
       if (!active) {
         return;
       }
 
       if (response.ok && response.data) {
         setOrders(response.data);
+        setHasMore(response.data.length === pageSize);
       } else {
         setErrorMessage(response.error ?? 'Unable to load orders');
       }
@@ -50,7 +54,17 @@ export function Orders() {
     return () => {
       active = false;
     };
-  }, [erpService, isAuthenticated, authLoading]);
+  }, [erpService, isAuthenticated, authLoading, pageNumber, pageSize]);
+
+  const goPrevPage = () => {
+    setPageNumber((prev) => Math.max(1, prev - 1));
+  };
+
+  const goNextPage = () => {
+    if (hasMore) {
+      setPageNumber((prev) => prev + 1);
+    }
+  };
 
   const filteredOrders = orders.filter((order) => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -168,6 +182,34 @@ export function Orders() {
               onChangeText={setSearchTerm}
             />
           </View>
+        </View>
+
+        <View style={[styles.paginationRow, isCompact && styles.paginationRowCompact]}>
+          <TouchableOpacity
+            style={[
+              styles.paginationButton,
+              { borderColor: colors.cardBorder },
+              pageNumber === 1 && styles.paginationButtonDisabled,
+            ]}
+            onPress={goPrevPage}
+            disabled={pageNumber === 1}
+          >
+            <Feather name="chevron-left" size={16} color={colors.textSecondary} />
+            <Text style={[styles.paginationText, { color: colors.textSecondary }]}>Prev</Text>
+          </TouchableOpacity>
+          <Text style={[styles.pageIndicator, { color: colors.textPrimary }]}>Page {pageNumber}</Text>
+          <TouchableOpacity
+            style={[
+              styles.paginationButton,
+              { borderColor: colors.cardBorder },
+              !hasMore && styles.paginationButtonDisabled,
+            ]}
+            onPress={goNextPage}
+            disabled={!hasMore}
+          >
+            <Text style={[styles.paginationText, { color: colors.textSecondary }]}>Next</Text>
+            <Feather name="chevron-right" size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         {/* Order List */}
@@ -301,6 +343,37 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     marginBottom: 24,
+  },
+  paginationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    gap: 12,
+  },
+  paginationRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  paginationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 2,
+  },
+  paginationButtonDisabled: {
+    opacity: 0.5,
+  },
+  paginationText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  pageIndicator: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   searchContainer: {
     flexDirection: 'row',

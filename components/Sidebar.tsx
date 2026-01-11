@@ -14,19 +14,29 @@ interface SidebarProps {
 
 export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: SidebarProps) {
   const { colors, theme, toggleTheme } = useTheme();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const { isCompact } = useResponsive();
   const isStacked = layout === 'stacked';
   const isDrawerLayout = isStacked && isCompact;
   const baseSidebarWidth = 270;
   const showProfile = !isCompact;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
+  const avatarUri = user?.avatarUrl?.trim() ?? '';
+  const defaultAvatar = require('../assets/images/icon.png');
+  const avatarSource = avatarUri && !avatarError ? { uri: avatarUri } : defaultAvatar;
+  const displayName = user?.name ?? 'User';
+  const displayRole = user?.role ?? user?.email ?? 'Operator';
 
   useEffect(() => {
     if (!isDrawerLayout) {
       setDrawerOpen(false);
     }
   }, [isDrawerLayout]);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [avatarUri]);
 
   const modules = [
     { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
@@ -77,6 +87,7 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
           <TouchableOpacity
             key={module.id}
             onPress={() => handleSelectModule(module.id)}
+            testID={`sidebar-nav-${module.id}`}
             style={[
               styles.navButton,
               {
@@ -117,14 +128,19 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
           <View style={[styles.profileCard, { backgroundColor: `${colors.hoverBg}`, borderColor: `${colors.cardBorder}` }]}>
             <View style={styles.avatarContainer}>
               <Image
-                source={{ uri: 'https://images.unsplash.com/photo-1655249481446-25d575f1c054?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=200' }}
+                source={avatarSource}
                 style={[styles.avatar, { borderColor: colors.neonGreen }]}
+                onError={() => setAvatarError(true)}
               />
               <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, borderColor: colors.sidebarBgTo }]} />
             </View>
             <View style={styles.profileInfo}>
-              <Text style={[styles.profileName, { color: colors.textPrimary }]}>Shinji Ikari</Text>
-              <Text style={[styles.profileRole, { color: colors.primaryPurple }]}>Administrator</Text>
+              <Text style={[styles.profileName, { color: colors.textPrimary }]} numberOfLines={1}>
+                {displayName}
+              </Text>
+              <Text style={[styles.profileRole, { color: colors.primaryPurple }]} numberOfLines={1}>
+                {displayRole}
+              </Text>
             </View>
           </View>
         </View>
@@ -160,6 +176,7 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
           isCompact && styles.logoutButtonCompact,
         ]}
         onPress={logout}
+        testID="sidebar-logout"
       >
         <Feather name="log-out" size={16} color={colors.accentOrange} />
         <Text style={[styles.logoutText, { color: colors.accentOrange }]}>Logout</Text>

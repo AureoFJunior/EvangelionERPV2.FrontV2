@@ -20,6 +20,11 @@ web-build/
 # Metro
 .metro-health-check*
 
+# Cypress
+cypress/screenshots/
+cypress/videos/
+cypress/downloads/
+
 # debug
 npm-debug.*
 yarn-debug.*
@@ -40,3 +45,5 @@ app-example
 # generated native folders
 /ios
 /android
+.env
+.env

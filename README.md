@@ -108,10 +108,10 @@ Este projeto é para fins educacionais e demonstração.
 ## API & Auth
 
 - Configure `EXPO_PUBLIC_API_BASE_URL` e, opcionalmente, `EXPO_PUBLIC_AUTH_PATH` (padr?o: `/User/LogInto`).
-- Endpoint padr?o: `http://localhost:5000/api/v1/User/LogInto/{username}/{password}` (GET).
+- Endpoint padr?o: `http://localhost:8082/api/v1/User/LogInto/{username}/{password}` (GET).
 - Use `useAuth().login({ username, password })` para obter o JWT; o token fica salvo no AsyncStorage e segue em todas as chamadas via `ApiClient`.
 - Products, Orders e Reports usam o `ErpService` e carregam dados do backend assim que a autentica??o estiver ativa (mantendo dados de exemplo como fallback).
 - Sess?es expiram automaticamente em 1 hora (ou `expiresIn` do backend, se fornecido) e o app faz logout ao vencer.
-- Google SSO: defina `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` e, ao usar Expo Go, `EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID`. A rota usada para trocar o `idToken` pelo JWT pode ser ajustada via `EXPO_PUBLIC_GOOGLE_AUTH_PATH` (padr?o: `/LoginWithGoogle`), esperando `POST { idToken }` e retornando o mesmo payload do login tradicional.
+- Google SSO: defina `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` e, ao usar Expo Go, `EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID`. A rota usada para trocar o `idToken` pelo JWT pode ser ajustada via `EXPO_PUBLIC_GOOGLE_AUTH_PATH` (padrao: `/User/LoginWithGoogle`), esperando `POST { idToken }` e retornando o mesmo payload do login tradicional. Para o fluxo com authorization code no web, use `EXPO_PUBLIC_GOOGLE_CODE_AUTH_PATH` (padrao: `/User/LoginWithGoogleCode`), esperando `POST { code, redirectUri, codeVerifier? }`.
 - A tela de login agora tem um bot?o "Sign in with Google" que inicia o fluxo OAuth e conclui o SSO usando o endpoint acima.
 

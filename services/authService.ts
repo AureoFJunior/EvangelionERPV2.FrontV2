@@ -13,17 +13,26 @@ export interface AuthTokens {
   enterpriseId?: string;
 }
 
+export interface GoogleCodeExchangePayload {
+  code: string;
+  redirectUri: string;
+  codeVerifier?: string;
+}
+
 export class AuthService {
   private readonly authPath: string;
   private readonly googleAuthPath?: string;
+  private readonly googleCodeAuthPath?: string;
 
   constructor(
     private readonly client: ApiClient,
     authPath = API_CONFIG.authPath,
     googleAuthPath = API_CONFIG.googleAuthPath,
+    googleCodeAuthPath = API_CONFIG.googleCodeAuthPath,
   ) {
     this.authPath = authPath;
     this.googleAuthPath = googleAuthPath;
+    this.googleCodeAuthPath = googleCodeAuthPath;
   }
 
   login(credentials: AuthCredentials): Promise<ApiResponse<AuthTokens>> {
@@ -43,6 +52,17 @@ export class AuthService {
       path,
       method: 'POST',
       body: { idToken },
+      withAuth: false,
+    });
+  }
+
+  loginWithGoogleCode(payload: GoogleCodeExchangePayload): Promise<ApiResponse<AuthTokens>> {
+    const path = this.googleCodeAuthPath ?? `${this.authPath}/LoginWithGoogleCode`;
+
+    return this.client.request<AuthTokens, GoogleCodeExchangePayload>({
+      path,
+      method: 'POST',
+      body: payload,
       withAuth: false,
     });
   }

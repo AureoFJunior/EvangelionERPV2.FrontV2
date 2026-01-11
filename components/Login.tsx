@@ -24,7 +24,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 export function Login() {
   const { colors, theme } = useTheme();
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, loginWithGoogleCode } = useAuth();
   const { isCompact } = useResponsive();
 
   const [username, setUsername] = useState('');
@@ -47,11 +47,15 @@ export function Login() {
 
   const missingWebClientId = Platform.OS === 'web' && !googleClientIds.webClientId;
 
+  const isWeb = Platform.OS === 'web';
+
   const [googleRequest, googleResponse, promptGoogleLogin] = Google.useAuthRequest({
     ...googleClientIds,
     webClientId: googleClientIds.webClientId ?? 'missing-web-client-id',
-    responseType: ResponseType.IdToken,
-    scopes: ['profile', 'email'],
+    responseType: isWeb ? ResponseType.Code : ResponseType.IdToken,
+    shouldAutoExchangeCode: isWeb ? false : undefined,
+    usePKCE: isWeb ? false : undefined,
+    scopes: ['openid', 'profile', 'email'],
   });
 
   const handleLogin = async () => {
@@ -93,6 +97,30 @@ export function Login() {
     [loginWithGoogle],
   );
 
+  const handleGoogleCode = useCallback(
+    async (code: string, redirectUri: string, codeVerifier?: string) => {
+      if (!code || !redirectUri) {
+        setError('Google authorization code missing.');
+        setSubmitting(false);
+        setSubmittingMode(null);
+        return;
+      }
+
+      setError(null);
+      setSubmitting(true);
+      setSubmittingMode('google');
+      try {
+        await loginWithGoogleCode({ code, redirectUri, codeVerifier });
+      } catch (err: any) {
+        setError(err?.message ?? 'Google sign-in failed');
+      } finally {
+        setSubmitting(false);
+        setSubmittingMode(null);
+      }
+    },
+    [loginWithGoogleCode],
+  );
+
   const startGoogleLogin = async () => {
     if (submitting) return;
     if (!googleRequest || missingWebClientId) {
@@ -114,9 +142,25 @@ export function Login() {
   useEffect(() => {
     if (!googleResponse) return;
     if (googleResponse.type === 'success') {
-      const idToken =
-        googleResponse.authentication?.idToken ?? (googleResponse as any).params?.id_token;
-      handleGoogleCredential(idToken);
+      const params = (googleResponse as any).params ?? {};
+      const idToken = googleResponse.authentication?.idToken ?? params.id_token;
+      const code = params.code;
+      const redirectUri = googleRequest?.redirectUri;
+      const codeVerifier = (googleRequest as any)?.codeVerifier;
+
+      if (code && redirectUri) {
+        handleGoogleCode(code, redirectUri, codeVerifier);
+        return;
+      }
+
+      if (idToken) {
+        handleGoogleCredential(idToken);
+        return;
+      }
+
+      setError('Google token missing.');
+      setSubmitting(false);
+      setSubmittingMode(null);
     } else if (googleResponse.type === 'error') {
       setError('Google authentication failed.');
       setSubmitting(false);
@@ -125,7 +169,7 @@ export function Login() {
       setSubmitting(false);
       setSubmittingMode(null);
     }
-  }, [googleResponse, handleGoogleCredential]);
+  }, [googleResponse, googleRequest, handleGoogleCode, handleGoogleCredential]);
 
   const isLoginDisabled = submitting || !username || !password;
   const glassBorder = `${colors.primaryPurple}55`;
@@ -202,7 +246,10 @@ export function Login() {
                 </Text>
 
                 {error && (
-                  <View style={[styles.errorBanner, { backgroundColor: `${colors.accentOrange}1a`, borderColor: colors.accentOrange }]}>
+                  <View
+                    testID="login-error"
+                    style={[styles.errorBanner, { backgroundColor: `${colors.accentOrange}1a`, borderColor: colors.accentOrange }]}
+                  >
                     <Text style={[styles.errorText, { color: colors.accentOrange }]}>{error}</Text>
                   </View>
                 )}
@@ -213,6 +260,7 @@ export function Login() {
                   <View style={[styles.inputContainer, { borderColor: colors.cardBorder, backgroundColor: inputBg }, isCompact && styles.inputContainerCompact]}>
                     <Feather name="user" size={20} color={colors.primaryPurple} style={styles.inputIcon} />
                     <TextInput
+                      testID="login-username"
                       style={[styles.input, { color: colors.textPrimary }]}
                       placeholder="Commander"
                       placeholderTextColor={colors.textMuted}
@@ -229,6 +277,7 @@ export function Login() {
                   <View style={[styles.inputContainer, { borderColor: colors.cardBorder, backgroundColor: inputBg }, isCompact && styles.inputContainerCompact]}>
                     <Feather name="lock" size={20} color={colors.primaryPurple} style={styles.inputIcon} />
                     <TextInput
+                      testID="login-password"
                       style={[styles.input, { color: colors.textPrimary }]}
                       placeholder="********"
                       placeholderTextColor={colors.textMuted}
@@ -254,6 +303,7 @@ export function Login() {
                 <TouchableOpacity
                   onPress={handleLogin}
                   disabled={isLoginDisabled}
+                  testID="login-submit"
                   style={[styles.loginButtonContainer, isLoginDisabled && styles.buttonDisabled]}
                 >
                   <LinearGradient
@@ -285,6 +335,7 @@ export function Login() {
                   ]}
                   onPress={startGoogleLogin}
                   disabled={submitting}
+                  testID="login-google"
                 >
                   <View style={[styles.googleContent, isCompact && styles.googleContentCompact]}>
                     <View style={[styles.googleIconBox, { backgroundColor: `${colors.neonGreen}20` }]}>

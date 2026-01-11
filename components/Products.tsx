@@ -12,6 +12,7 @@ import { useResponsive } from '../hooks/useResponsive';
 
 const statusFilters = ['active', 'deactivated', 'all'];
 const unitOptions = ['UN', 'KG', 'L', 'M', 'CM', 'BOX'];
+type ProductViewMode = 'detailed' | 'compact';
 
 export function Products() {
   const { colors } = useTheme();
@@ -25,6 +26,10 @@ export function Products() {
   const [products, setProducts] = useState<ProductModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ProductViewMode>('detailed');
+  const [pageNumber, setPageNumber] = useState(1);
+  const [pageSize] = useState(50);
+  const [hasMore, setHasMore] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductModel | null>(null);
   const [editName, setEditName] = useState('');
   const [editPicture, setEditPicture] = useState('');
@@ -67,13 +72,14 @@ export function Products() {
       setLoading(true);
       setErrorMessage(null);
 
-      const response = await erpService.fetchProducts();
+      const response = await erpService.fetchProducts(pageNumber, pageSize);
       if (!active) {
         return;
       }
 
       if (response.ok && response.data) {
         setProducts(response.data);
+        setHasMore(response.data.length === pageSize);
       } else {
         setErrorMessage(response.error ?? 'Unable to load products');
       }
@@ -86,7 +92,17 @@ export function Products() {
     return () => {
       active = false;
     };
-  }, [erpService, isAuthenticated, authLoading]);
+  }, [erpService, isAuthenticated, authLoading, pageNumber, pageSize]);
+
+  const goPrevPage = () => {
+    setPageNumber((prev) => Math.max(1, prev - 1));
+  };
+
+  const goNextPage = () => {
+    if (hasMore) {
+      setPageNumber((prev) => prev + 1);
+    }
+  };
 
   const filteredProducts = products.filter((product) => {
     const matchesSearch = (product.name ?? '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -588,105 +604,267 @@ export function Products() {
           </TouchableOpacity>
         </View>
 
-        {/* Product List */}
-        <View style={styles.productList}>
-          {filteredProducts.map((product) => {
-            const quantity = getStorageQuantity(product);
-            const status = getStockStatus(quantity);
-            const statusColor = getStatusColor(quantity);
-            const isMenuOpen = menuProductId === product.id;
-            const imageUri = resolvePictureUri(product);
+        <View style={[styles.viewRow, isCompact && styles.viewRowCompact]}>
+          <Text style={[styles.viewLabel, { color: colors.textSecondary }]}>View</Text>
+          <View style={styles.viewToggle}>
+            <TouchableOpacity
+              style={[
+                styles.viewButton,
+                {
+                  borderColor: colors.cardBorder,
+                  backgroundColor: viewMode === 'detailed' ? `${colors.neonGreen}12` : colors.cardBgFrom,
+                },
+              ]}
+              onPress={() => setViewMode('detailed')}
+            >
+              <Feather
+                name="grid"
+                size={14}
+                color={viewMode === 'detailed' ? colors.neonGreen : colors.textSecondary}
+              />
+              {!isCompact && (
+                <Text
+                  style={[
+                    styles.viewButtonText,
+                    { color: viewMode === 'detailed' ? colors.neonGreen : colors.textSecondary },
+                  ]}
+                >
+                  Detailed
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.viewButton,
+                {
+                  borderColor: colors.cardBorder,
+                  backgroundColor: viewMode === 'compact' ? `${colors.neonGreen}12` : colors.cardBgFrom,
+                },
+              ]}
+              onPress={() => setViewMode('compact')}
+            >
+              <Feather
+                name="list"
+                size={14}
+                color={viewMode === 'compact' ? colors.neonGreen : colors.textSecondary}
+              />
+              {!isCompact && (
+                <Text
+                  style={[
+                    styles.viewButtonText,
+                    { color: viewMode === 'compact' ? colors.neonGreen : colors.textSecondary },
+                  ]}
+                >
+                  Compact
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
 
-            return (
-              <View
-                key={product.id}
-                style={[styles.productCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-              >
-                <View style={[styles.productMedia, isCompact && styles.productMediaCompact]}>
-                  {imageUri ? (
-                    <Image source={{ uri: imageUri }} style={styles.productMediaImage} />
-                  ) : (
-                    <View style={[styles.productMediaFallback, { borderColor: colors.cardBorder }]}>
-                      <Feather name="image" size={20} color={colors.textMuted} />
-                      <Text style={[styles.productMediaText, { color: colors.textMuted }]}>No image</Text>
+        <View style={[styles.paginationRow, isCompact && styles.paginationRowCompact]}>
+          <TouchableOpacity
+            style={[
+              styles.paginationButton,
+              { borderColor: colors.cardBorder },
+              pageNumber === 1 && styles.paginationButtonDisabled,
+            ]}
+            onPress={goPrevPage}
+            disabled={pageNumber === 1}
+          >
+            <Feather name="chevron-left" size={16} color={colors.textSecondary} />
+            <Text style={[styles.paginationText, { color: colors.textSecondary }]}>Prev</Text>
+          </TouchableOpacity>
+          <Text style={[styles.pageIndicator, { color: colors.textPrimary }]}>Page {pageNumber}</Text>
+          <TouchableOpacity
+            style={[
+              styles.paginationButton,
+              { borderColor: colors.cardBorder },
+              !hasMore && styles.paginationButtonDisabled,
+            ]}
+            onPress={goNextPage}
+            disabled={!hasMore}
+          >
+            <Text style={[styles.paginationText, { color: colors.textSecondary }]}>Next</Text>
+            <Feather name="chevron-right" size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Product List */}
+        {viewMode === 'compact' && (
+          <View style={styles.compactList}>
+            {filteredProducts.map((product) => {
+              const quantity = getStorageQuantity(product);
+              const status = getStockStatus(quantity);
+              const statusColor = getStatusColor(quantity);
+              const unitLabel = product.unitOfMeasure ? product.unitOfMeasure.toUpperCase() : '-';
+
+              return (
+                <View
+                  key={product.id}
+                  style={[styles.compactCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
+                >
+                  <View style={[styles.compactTop, isCompact && styles.compactTopCompact]}>
+                    <View style={styles.compactInfo}>
+                      <Text style={[styles.compactName, { color: colors.textPrimary }]} numberOfLines={1}>
+                        {product.name}
+                      </Text>
+                      <Text style={[styles.compactMeta, { color: colors.textSecondary }]} numberOfLines={1}>
+                        {(product.category ?? 'Uncategorized')} | {unitLabel}
+                      </Text>
+                    </View>
+                    <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
+                      <Text style={[styles.statusText, { color: statusColor }]}>{status}</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.compactBottom, isCompact && styles.compactBottomCompact]}>
+                    <View style={styles.compactStats}>
+                      <View style={styles.detailRow}>
+                        <Feather name="dollar-sign" size={14} color={colors.primaryPurple} />
+                        <Text style={[styles.detailText, { color: colors.textSecondary }]}>
+                          ${((product.defaultValue ?? product.price) ?? 0).toFixed(2)}
+                        </Text>
+                      </View>
+                      <View style={styles.detailRow}>
+                        <Feather name="package" size={14} color={colors.primaryPurple} />
+                        <Text style={[styles.detailText, { color: colors.textSecondary }]}>
+                          Stock: {quantity}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.compactActions}>
+                      <TouchableOpacity
+                        style={[styles.compactActionButton, { borderColor: colors.cardBorder }]}
+                        onPress={() => openDetails(product)}
+                      >
+                        <Feather name="info" size={14} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.compactActionButton, { borderColor: colors.cardBorder }]}
+                        onPress={() => openEdit(product)}
+                      >
+                        <Feather name="edit-3" size={14} color={colors.primaryPurple} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.compactActionButton,
+                          { borderColor: colors.cardBorder },
+                          deactivatingId === product.id && styles.compactActionButtonDisabled,
+                        ]}
+                        onPress={() => handleDeactivate(product)}
+                        disabled={deactivatingId === product.id}
+                      >
+                        <Feather name="trash-2" size={14} color="#f72585" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {viewMode === 'detailed' && (
+          <View style={styles.productList}>
+            {filteredProducts.map((product) => {
+              const quantity = getStorageQuantity(product);
+              const status = getStockStatus(quantity);
+              const statusColor = getStatusColor(quantity);
+              const isMenuOpen = menuProductId === product.id;
+              const imageUri = resolvePictureUri(product);
+
+              return (
+                <View
+                  key={product.id}
+                  style={[styles.productCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
+                >
+                  <View style={[styles.productMedia, isCompact && styles.productMediaCompact]}>
+                    {imageUri ? (
+                      <Image source={{ uri: imageUri }} style={styles.productMediaImage} />
+                    ) : (
+                      <View style={[styles.productMediaFallback, { borderColor: colors.cardBorder }]}>
+                        <Feather name="image" size={20} color={colors.textMuted} />
+                        <Text style={[styles.productMediaText, { color: colors.textMuted }]}>No image</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.productHeader}>
+                    <View style={styles.productInfo}>
+                      <Text style={[styles.productName, { color: colors.textPrimary }]}>{product.name}</Text>
+                      <Text style={[styles.productCategory, { color: colors.textSecondary }]}>{product.category}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() =>
+                        setMenuProductId((current) => (current === product.id ? null : product.id))
+                      }
+                    >
+                      <Feather name="more-vertical" size={18} color={colors.primaryPurple} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.productDetails}>
+                    <View style={styles.detailRow}>
+                      <Feather name="dollar-sign" size={16} color={colors.primaryPurple} />
+                      <Text style={[styles.detailText, { color: colors.textSecondary }]}>
+                        ${((product.defaultValue ?? product.price) ?? 0).toFixed(2)}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Feather name="package" size={16} color={colors.primaryPurple} />
+                      <Text style={[styles.detailText, { color: colors.textSecondary }]}>
+                        Stock: {quantity}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Feather name="hash" size={16} color={colors.primaryPurple} />
+                      <Text style={[styles.detailText, { color: colors.textSecondary }]}>
+                        Unit: {product.unitOfMeasure ? product.unitOfMeasure.toUpperCase() : '-'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
+                    <Text style={[styles.statusText, { color: statusColor }]}>{status}</Text>
+                  </View>
+
+                  {isMenuOpen && (
+                    <View style={[styles.menuCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+                      <TouchableOpacity
+                        style={styles.menuItem}
+                        onPress={() => openDetails(product)}
+                      >
+                        <Feather name="info" size={14} color={colors.textSecondary} />
+                        <Text style={[styles.menuLabel, { color: colors.textSecondary }]}>Details</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.menuItem}
+                        onPress={() => openEdit(product)}
+                      >
+                        <Feather name="edit-3" size={14} color={colors.primaryPurple} />
+                        <Text style={[styles.menuLabel, { color: colors.primaryPurple }]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.menuItem}
+                        onPress={() => {
+                          setMenuProductId(null);
+                          handleDeactivate(product);
+                        }}
+                        disabled={deactivatingId === product.id}
+                      >
+                        <Feather name="trash-2" size={14} color="#f72585" />
+                        <Text style={[styles.menuLabel, { color: '#f72585' }]}>
+                          {deactivatingId === product.id ? 'Deactivating...' : 'Deactivate'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>
-
-                <View style={styles.productHeader}>
-                  <View style={styles.productInfo}>
-                    <Text style={[styles.productName, { color: colors.textPrimary }]}>{product.name}</Text>
-                    <Text style={[styles.productCategory, { color: colors.textSecondary }]}>{product.category}</Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() =>
-                      setMenuProductId((current) => (current === product.id ? null : product.id))
-                    }
-                  >
-                    <Feather name="more-vertical" size={18} color={colors.primaryPurple} />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.productDetails}>
-                  <View style={styles.detailRow}>
-                    <Feather name="dollar-sign" size={16} color={colors.primaryPurple} />
-                    <Text style={[styles.detailText, { color: colors.textSecondary }]}>
-                      ${((product.defaultValue ?? product.price) ?? 0).toFixed(2)}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Feather name="package" size={16} color={colors.primaryPurple} />
-                    <Text style={[styles.detailText, { color: colors.textSecondary }]}>
-                      Stock: {quantity}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Feather name="hash" size={16} color={colors.primaryPurple} />
-                    <Text style={[styles.detailText, { color: colors.textSecondary }]}>
-                      Unit: {product.unitOfMeasure ? product.unitOfMeasure.toUpperCase() : '-'}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
-                  <Text style={[styles.statusText, { color: statusColor }]}>{status}</Text>
-                </View>
-
-                {isMenuOpen && (
-                  <View style={[styles.menuCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => openDetails(product)}
-                    >
-                      <Feather name="info" size={14} color={colors.textSecondary} />
-                      <Text style={[styles.menuLabel, { color: colors.textSecondary }]}>Details</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => openEdit(product)}
-                    >
-                      <Feather name="edit-3" size={14} color={colors.primaryPurple} />
-                      <Text style={[styles.menuLabel, { color: colors.primaryPurple }]}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => {
-                        setMenuProductId(null);
-                        handleDeactivate(product);
-                      }}
-                      disabled={deactivatingId === product.id}
-                    >
-                      <Feather name="trash-2" size={14} color="#f72585" />
-                      <Text style={[styles.menuLabel, { color: '#f72585' }]}>
-                        {deactivatingId === product.id ? 'Deactivating...' : 'Deactivate'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       <Modal visible={editVisible} transparent animationType="fade" onRequestClose={closeEdit}>
@@ -1224,6 +1402,72 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'stretch',
   },
+  viewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    gap: 12,
+  },
+  viewRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  viewLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  viewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  viewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 2,
+  },
+  viewButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  paginationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    gap: 12,
+  },
+  paginationRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  paginationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 2,
+  },
+  paginationButtonDisabled: {
+    opacity: 0.5,
+  },
+  paginationText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  pageIndicator: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   searchContainer: {
     flex: 1,
     flexDirection: 'row',
@@ -1249,6 +1493,65 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 44,
     borderRadius: 10,
+  },
+  compactList: {
+    gap: 12,
+  },
+  compactCard: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 2,
+  },
+  compactTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 8,
+  },
+  compactTopCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  compactInfo: {
+    flex: 1,
+  },
+  compactName: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  compactMeta: {
+    fontSize: 11,
+  },
+  compactBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  compactBottomCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  compactStats: {
+    gap: 6,
+  },
+  compactActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  compactActionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compactActionButtonDisabled: {
+    opacity: 0.5,
   },
   productList: {
     gap: 16,

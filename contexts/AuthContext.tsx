@@ -11,15 +11,17 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_CONFIG } from '../constants/api';
 import { ApiClient, ApiResponse } from '../services/apiClient';
-import { AuthCredentials, AuthService, AuthTokens } from '../services/authService';
+import { AuthCredentials, AuthService, AuthTokens, GoogleCodeExchangePayload } from '../services/authService';
 
 interface AuthContextValue {
   token: string | null;
   enterpriseId: string | null;
   isAuthenticated: boolean;
   loading: boolean;
+  user: AuthUserProfile | null;
   login: (credentials: AuthCredentials) => Promise<AuthTokens>;
   loginWithGoogle: (idToken: string) => Promise<AuthTokens>;
+  loginWithGoogleCode: (payload: GoogleCodeExchangePayload) => Promise<AuthTokens>;
   logout: () => Promise<void>;
   client: ApiClient;
 }
@@ -36,6 +38,14 @@ interface StoredSession {
   token: string;
   expiresAt: number;
   enterpriseId?: string | null;
+  user?: AuthUserProfile | null;
+}
+
+interface AuthUserProfile {
+  name: string;
+  email?: string | null;
+  role?: string | null;
+  avatarUrl?: string | null;
 }
 
 const decodeBase64 = (input: string) => {
@@ -107,6 +117,177 @@ const parseJwtPayload = (token: string): Record<string, unknown> | null => {
   }
 
   return null;
+};
+
+const normalizeString = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const pickFirstString = (...values: unknown[]) => {
+  for (const value of values) {
+    const normalized = normalizeString(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const pickFromRecords = (records: Array<Record<string, any>>, keys: string[]) => {
+  for (const record of records) {
+    for (const key of keys) {
+      if (record && Object.prototype.hasOwnProperty.call(record, key)) {
+        const resolved = pickFirstString(record[key]);
+        if (resolved) {
+          return resolved;
+        }
+      }
+    }
+  }
+  return null;
+};
+
+const pickRoleFromValue = (value: unknown) => {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const candidate = pickFirstString(entry);
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, any>;
+    return pickFirstString(record.name, record.role, record.title);
+  }
+
+  return pickFirstString(value);
+};
+
+const pickRole = (records: Array<Record<string, any>>) => {
+  for (const record of records) {
+    const direct = pickFirstString(
+      record.role,
+      record.roleName,
+      record.role_name,
+      record.title,
+      record.jobTitle,
+      record.job_title,
+      record.position,
+    );
+    if (direct) {
+      return direct;
+    }
+
+    const candidates = [
+      record.roles,
+      record.roleList,
+      record.groups,
+      record.group,
+      record.permissions,
+      record['cognito:groups'],
+      record.realm_access?.roles,
+    ];
+    for (const candidate of candidates) {
+      const resolved = pickRoleFromValue(candidate);
+      if (resolved) {
+        return resolved;
+      }
+    }
+  }
+
+  return null;
+};
+
+const buildProfileRecords = (data: unknown, token?: string | null) => {
+  const records: Array<Record<string, any>> = [];
+
+  if (data && typeof data === 'object') {
+    const record = data as Record<string, any>;
+    records.push(record);
+    const nestedKeys = ['user', 'profile', 'account', 'employee', 'owner', 'member', 'data'];
+    nestedKeys.forEach((key) => {
+      if (record[key] && typeof record[key] === 'object') {
+        records.push(record[key]);
+      }
+    });
+  }
+
+  if (token) {
+    const payload = parseJwtPayload(token);
+    if (payload && typeof payload === 'object') {
+      records.push(payload as Record<string, any>);
+    }
+  }
+
+  return records;
+};
+
+const resolveUserProfile = (
+  data: unknown,
+  token?: string | null,
+  fallback?: Partial<AuthUserProfile> | null,
+) => {
+  const records = buildProfileRecords(data, token);
+
+  const givenName = pickFromRecords(records, ['given_name', 'givenName', 'first_name', 'firstName']);
+  const familyName = pickFromRecords(records, ['family_name', 'familyName', 'last_name', 'lastName', 'surname']);
+  const combinedName = [givenName, familyName].filter(Boolean).join(' ').trim();
+
+  const displayName =
+    pickFromRecords(records, ['name', 'displayName', 'fullName', 'full_name']) ||
+    combinedName ||
+    pickFromRecords(records, ['preferred_username', 'username', 'userName', 'unique_name', 'upn', 'email']) ||
+    pickFirstString(fallback?.name, fallback?.email) ||
+    'User';
+
+  const email =
+    pickFromRecords(records, ['email', 'emailAddress', 'mail', 'upn', 'preferred_username']) ||
+    pickFirstString(fallback?.email) ||
+    null;
+
+  const avatarUrl =
+    pickFromRecords(records, [
+      'picture',
+      'avatar',
+      'avatarUrl',
+      'avatar_url',
+      'profileImage',
+      'profile_image',
+      'photo',
+      'image',
+    ]) ||
+    pickFirstString(fallback?.avatarUrl) ||
+    null;
+
+  const role = pickRole(records) || pickFirstString(fallback?.role) || null;
+
+  return {
+    name: displayName,
+    email,
+    role,
+    avatarUrl,
+  };
+};
+
+const areUsersEqual = (left?: AuthUserProfile | null, right?: AuthUserProfile | null) => {
+  if (!left && !right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.name === right.name &&
+    left.email === right.email &&
+    left.role === right.role &&
+    left.avatarUrl === right.avatarUrl
+  );
 };
 
 const resolveEnterpriseId = (data: unknown, token?: string | null) => {
@@ -191,6 +372,7 @@ const resolveExpiresInMs = (data: unknown) => {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const logoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -205,6 +387,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearLogoutTimer();
     setToken(null);
     setEnterpriseId(null);
+    setUser(null);
     client.setToken(null);
     await AsyncStorage.removeItem(TOKEN_STORAGE_KEY);
   }, []);
@@ -238,15 +421,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (session?.token && session.expiresAt > Date.now()) {
             const resolvedEnterpriseId =
               session.enterpriseId ?? resolveEnterpriseId(null, session.token);
+            const resolvedUser = resolveUserProfile(null, session.token, session.user ?? null);
             setToken(session.token);
             setEnterpriseId(resolvedEnterpriseId ?? null);
+            setUser(resolvedUser);
             client.setToken(session.token);
             scheduleLogout(session.expiresAt);
 
-            if (resolvedEnterpriseId && resolvedEnterpriseId !== session.enterpriseId) {
+            const shouldUpdateSession =
+              (resolvedEnterpriseId && resolvedEnterpriseId !== session.enterpriseId) ||
+              !areUsersEqual(session.user ?? null, resolvedUser);
+
+            if (shouldUpdateSession) {
               const refreshed: StoredSession = {
                 ...session,
                 enterpriseId: resolvedEnterpriseId,
+                user: resolvedUser,
               };
               await AsyncStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(refreshed));
             }
@@ -265,7 +455,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => clearLogoutTimer(), []);
 
   const persistSession = useCallback(
-    async (response: ApiResponse<AuthTokens>) => {
+    async (response: ApiResponse<AuthTokens>, fallbackUser?: Partial<AuthUserProfile> | null) => {
       const nextToken = resolveTokenValue(response.data);
 
       if (!response.ok || !nextToken) {
@@ -275,11 +465,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const resolvedEnterpriseId = resolveEnterpriseId(response.data, nextToken);
       const expiresInMs = resolveExpiresInMs(response.data);
       const expiresAt = Date.now() + expiresInMs;
-      const session: StoredSession = { token: nextToken, expiresAt, enterpriseId: resolvedEnterpriseId };
+      const resolvedUser = resolveUserProfile(response.data, nextToken, fallbackUser ?? null);
+      const session: StoredSession = {
+        token: nextToken,
+        expiresAt,
+        enterpriseId: resolvedEnterpriseId,
+        user: resolvedUser,
+      };
 
       await AsyncStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(session));
       setToken(nextToken);
       setEnterpriseId(resolvedEnterpriseId);
+      setUser(resolvedUser);
       client.setToken(nextToken);
       scheduleLogout(expiresAt);
 
@@ -295,7 +492,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (credentials: AuthCredentials) => {
       const response = await authService.login(credentials);
-      return persistSession(response);
+      return persistSession(response, { name: credentials.username });
     },
     [persistSession],
   );
@@ -311,18 +508,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persistSession],
   );
 
+  const loginWithGoogleCode = useCallback(
+    async (payload: GoogleCodeExchangePayload) => {
+      if (!payload?.code || !payload?.redirectUri) {
+        throw new Error('Missing Google authorization code or redirectUri');
+      }
+      const response = await authService.loginWithGoogleCode(payload);
+      return persistSession(response);
+    },
+    [persistSession],
+  );
+
   const value = useMemo(
     () => ({
       token,
       enterpriseId,
       isAuthenticated: Boolean(token),
       loading,
+      user,
       login,
       loginWithGoogle,
+      loginWithGoogleCode,
       logout,
       client,
     }),
-    [token, enterpriseId, loading, login, loginWithGoogle, logout],
+    [token, enterpriseId, loading, user, login, loginWithGoogle, loginWithGoogleCode, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

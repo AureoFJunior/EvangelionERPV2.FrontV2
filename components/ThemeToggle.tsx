@@ -9,6 +9,7 @@ export function ThemeToggle() {
   return (
     <TouchableOpacity
       onPress={toggleTheme}
+      testID="theme-toggle"
       style={[styles.container, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
     >
       <Text style={[styles.label, { color: colors.textSecondary }]}>Theme</Text>
