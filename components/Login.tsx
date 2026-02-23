@@ -1,190 +1,66 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ImageBackground,
   Platform,
   KeyboardAvoidingView,
   ScrollView,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
-import { ResponseType } from 'expo-auth-session';
+import { Button, Divider, Surface, TextInput as PaperTextInput, TouchableRipple } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useResponsive } from '../hooks/useResponsive';
+import { useLoginController } from '../hooks/auth/useLoginController';
+import { useI18n } from '../contexts/I18nContext';
 
 WebBrowser.maybeCompleteAuthSession();
 
 export function Login() {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
+  const { t } = useI18n();
   const { login, loginWithGoogle, loginWithGoogleCode } = useAuth();
   const { isCompact } = useResponsive();
 
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [submittingMode, setSubmittingMode] = useState<'password' | 'google' | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
-
-  const googleClientIds = useMemo(
-    () => ({
-      androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-      iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-      webClientId:
-        process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID,
-      expoClientId: process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID,
-    }),
-    [],
-  );
-
-  const missingWebClientId = Platform.OS === 'web' && !googleClientIds.webClientId;
-
-  const isWeb = Platform.OS === 'web';
-
-  const [googleRequest, googleResponse, promptGoogleLogin] = Google.useAuthRequest({
-    ...googleClientIds,
-    webClientId: googleClientIds.webClientId ?? 'missing-web-client-id',
-    responseType: isWeb ? ResponseType.Code : ResponseType.IdToken,
-    shouldAutoExchangeCode: isWeb ? false : undefined,
-    usePKCE: isWeb ? false : undefined,
-    scopes: ['openid', 'profile', 'email'],
+  const {
+    username,
+    setUsername,
+    password,
+    setPassword,
+    submitting,
+    error,
+    submittingMode,
+    showPassword,
+    setShowPassword,
+    missingWebClientId,
+    googleRequest,
+    isLoginDisabled,
+    handleLogin,
+    startGoogleLogin,
+  } = useLoginController({
+    login,
+    loginWithGoogle,
+    loginWithGoogleCode,
   });
-
-  const handleLogin = async () => {
-    if (!username || !password || submitting) return;
-    setSubmitting(true);
-    setSubmittingMode('password');
-    setError(null);
-    try {
-      await login({ username, password });
-    } catch (err: any) {
-      setError(err?.message ?? 'Login failed');
-    } finally {
-      setSubmitting(false);
-      setSubmittingMode(null);
-    }
-  };
-
-  const handleGoogleCredential = useCallback(
-    async (idToken: string) => {
-      if (!idToken) {
-        setError('Google token missing.');
-        setSubmitting(false);
-        setSubmittingMode(null);
-        return;
-      }
-
-      setError(null);
-      setSubmitting(true);
-      setSubmittingMode('google');
-      try {
-        await loginWithGoogle(idToken);
-      } catch (err: any) {
-        setError(err?.message ?? 'Google sign-in failed');
-      } finally {
-        setSubmitting(false);
-        setSubmittingMode(null);
-      }
-    },
-    [loginWithGoogle],
-  );
-
-  const handleGoogleCode = useCallback(
-    async (code: string, redirectUri: string, codeVerifier?: string) => {
-      if (!code || !redirectUri) {
-        setError('Google authorization code missing.');
-        setSubmitting(false);
-        setSubmittingMode(null);
-        return;
-      }
-
-      setError(null);
-      setSubmitting(true);
-      setSubmittingMode('google');
-      try {
-        await loginWithGoogleCode({ code, redirectUri, codeVerifier });
-      } catch (err: any) {
-        setError(err?.message ?? 'Google sign-in failed');
-      } finally {
-        setSubmitting(false);
-        setSubmittingMode(null);
-      }
-    },
-    [loginWithGoogleCode],
-  );
-
-  const startGoogleLogin = async () => {
-    if (submitting) return;
-    if (!googleRequest || missingWebClientId) {
-      setError('Google login is not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (and platform IDs).');
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    setSubmittingMode('google');
-    try {
-      await promptGoogleLogin({ useProxy: Platform.OS !== 'web' });
-    } catch (err: any) {
-      setError(err?.message ?? 'Unable to start Google login');
-      setSubmitting(false);
-      setSubmittingMode(null);
-    }
-  };
-
-  useEffect(() => {
-    if (!googleResponse) return;
-    if (googleResponse.type === 'success') {
-      const params = (googleResponse as any).params ?? {};
-      const idToken = googleResponse.authentication?.idToken ?? params.id_token;
-      const code = params.code;
-      const redirectUri = googleRequest?.redirectUri;
-      const codeVerifier = (googleRequest as any)?.codeVerifier;
-
-      if (code && redirectUri) {
-        handleGoogleCode(code, redirectUri, codeVerifier);
-        return;
-      }
-
-      if (idToken) {
-        handleGoogleCredential(idToken);
-        return;
-      }
-
-      setError('Google token missing.');
-      setSubmitting(false);
-      setSubmittingMode(null);
-    } else if (googleResponse.type === 'error') {
-      setError('Google authentication failed.');
-      setSubmitting(false);
-      setSubmittingMode(null);
-    } else if (googleResponse.type === 'cancel' || googleResponse.type === 'dismiss') {
-      setSubmitting(false);
-      setSubmittingMode(null);
-    }
-  }, [googleResponse, googleRequest, handleGoogleCode, handleGoogleCredential]);
-
-  const isLoginDisabled = submitting || !username || !password;
-  const glassBorder = `${colors.primaryPurple}55`;
-  const glassBg = `${colors.cardBgFrom}80`;
-  const inputBg = `${colors.inputBgFrom}cc`;
-  const googleBg = `${colors.neonGreen}12`;
-  const overlayColor = theme === 'light' ? 'rgba(20, 22, 35, 0.72)' : 'rgba(8, 10, 18, 0.82)';
+  const glassBorder = `${colors.cardBorder}cc`;
+  const glassBg = `${colors.cardBgFrom}f2`;
+  const inputBg = `${colors.inputBgFrom}f5`;
+  const googleBg = `${colors.neonGreen}14`;
 
   return (
-    <ImageBackground
-      source={{ uri: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1920&q=80' }}
-      style={styles.background}
-      blurRadius={Platform.OS === 'ios' ? 10 : 3}
-    >
-      <View style={[styles.overlay, { backgroundColor: overlayColor }]} />
+    <View style={styles.background}>
+      <LinearGradient
+        colors={[colors.appBg, colors.cardBgTo]}
+        start={{ x: 0.1, y: 0 }}
+        end={{ x: 0.9, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={[styles.glow, styles.glowTop, { backgroundColor: `${colors.secondaryPurple}40` }]} />
+      <View style={[styles.glow, styles.glowBottom, { backgroundColor: `${colors.neonGreen}2d` }]} />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -196,16 +72,17 @@ export function Login() {
           showsVerticalScrollIndicator={false}
         >
           {/* Logo Card */}
-          <View
+          <Surface
             style={[
               styles.glassCard,
               { borderColor: glassBorder, backgroundColor: glassBg },
               isCompact && styles.glassCardCompact,
             ]}
+            elevation={0}
           >
             <BlurView
-              intensity={20}
-              tint={theme === 'light' ? 'light' : 'dark'}
+              intensity={12}
+              tint="light"
               style={[styles.blurContainer, isCompact && styles.blurContainerCompact]}
             >
               <View style={[styles.logoContainer, isCompact && styles.logoContainerCompact]}>
@@ -217,32 +94,33 @@ export function Login() {
                     NERV ERP
                   </Text>
                   <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                    Secure Access Protocol
+                    {t('Secure Access Protocol')}
                   </Text>
                 </View>
               </View>
             </BlurView>
-          </View>
+          </Surface>
 
           {/* Login Form Card */}
-          <View
+          <Surface
             style={[
               styles.glassCard,
               { borderColor: glassBorder, backgroundColor: glassBg },
               isCompact && styles.glassCardCompact,
             ]}
+            elevation={0}
           >
             <BlurView
-              intensity={20}
-              tint={theme === 'light' ? 'light' : 'dark'}
+              intensity={12}
+              tint="light"
               style={[styles.blurContainer, isCompact && styles.blurContainerCompact]}
             >
               <View style={styles.formContainer}>
                 <Text style={[styles.formTitle, { color: colors.textPrimary }, isCompact && styles.formTitleCompact]}>
-                  Login
+                  {t('Login')}
                 </Text>
                 <Text style={[styles.formSubtitle, { color: colors.textSecondary }]}>
-                  Authenticate to synchronize live data with System.
+                  {t('Authenticate to synchronize live data with System.')}
                 </Text>
 
                 {error && (
@@ -256,114 +134,137 @@ export function Login() {
 
                 {/* Username Input */}
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Username</Text>
-                  <View style={[styles.inputContainer, { borderColor: colors.cardBorder, backgroundColor: inputBg }, isCompact && styles.inputContainerCompact]}>
-                    <Feather name="user" size={20} color={colors.primaryPurple} style={styles.inputIcon} />
-                    <TextInput
-                      testID="login-username"
-                      style={[styles.input, { color: colors.textPrimary }]}
-                      placeholder="Commander"
-                      placeholderTextColor={colors.textMuted}
-                      value={username}
-                      onChangeText={setUsername}
-                      autoCapitalize="none"
-                    />
-                  </View>
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>{t('Username')}</Text>
+                  <PaperTextInput
+                    testID="login-username"
+                    mode="outlined"
+                    placeholder={t('Commander')}
+                    placeholderTextColor={colors.textMuted}
+                    value={username}
+                    onChangeText={setUsername}
+                    autoCapitalize="none"
+                    outlineColor={colors.cardBorder}
+                    activeOutlineColor={colors.primaryPurple}
+                    textColor={colors.textPrimary}
+                    style={[
+                      styles.paperInput,
+                      { backgroundColor: inputBg },
+                      isCompact && styles.paperInputCompact,
+                    ]}
+                    left={
+                      <PaperTextInput.Icon
+                        icon={() => <Feather name="user" size={18} color={colors.primaryPurple} />}
+                      />
+                    }
+                  />
                 </View>
 
                 {/* Password Input */}
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Password</Text>
-                  <View style={[styles.inputContainer, { borderColor: colors.cardBorder, backgroundColor: inputBg }, isCompact && styles.inputContainerCompact]}>
-                    <Feather name="lock" size={20} color={colors.primaryPurple} style={styles.inputIcon} />
-                    <TextInput
-                      testID="login-password"
-                      style={[styles.input, { color: colors.textPrimary }]}
-                      placeholder="********"
-                      placeholderTextColor={colors.textMuted}
-                      value={password}
-                      onChangeText={setPassword}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                    />
-                    <TouchableOpacity
-                      onPress={() => setShowPassword((prev) => !prev)}
-                      style={styles.eyeIcon}
-                    >
-                      <Feather
-                        name={showPassword ? 'eye' : 'eye-off'}
-                        size={20}
-                        color={colors.textMuted}
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>{t('Password')}</Text>
+                  <PaperTextInput
+                    testID="login-password"
+                    mode="outlined"
+                    placeholder="********"
+                    placeholderTextColor={colors.textMuted}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    outlineColor={colors.cardBorder}
+                    activeOutlineColor={colors.primaryPurple}
+                    textColor={colors.textPrimary}
+                    style={[
+                      styles.paperInput,
+                      { backgroundColor: inputBg },
+                      isCompact && styles.paperInputCompact,
+                    ]}
+                    left={
+                      <PaperTextInput.Icon
+                        icon={() => <Feather name="lock" size={18} color={colors.primaryPurple} />}
                       />
-                    </TouchableOpacity>
-                  </View>
+                    }
+                    right={
+                      <PaperTextInput.Icon
+                        onPress={() => setShowPassword((prev) => !prev)}
+                        icon={() => (
+                          <Feather
+                            name={showPassword ? 'eye' : 'eye-off'}
+                            size={18}
+                            color={colors.textMuted}
+                          />
+                        )}
+                      />
+                    }
+                  />
                 </View>
 
                 {/* Login Button */}
-                <TouchableOpacity
+                <Button
+                  mode="contained"
                   onPress={handleLogin}
                   disabled={isLoginDisabled}
+                  loading={submitting && submittingMode === 'password'}
                   testID="login-submit"
-                  style={[styles.loginButtonContainer, isLoginDisabled && styles.buttonDisabled]}
+                  buttonColor={colors.primaryPurple}
+                  textColor={colors.appBg}
+                  style={[styles.loginButton, isCompact && styles.loginButtonCompact]}
+                  contentStyle={[styles.loginButtonContent, isCompact && styles.loginButtonContentCompact]}
+                  icon={({ size }) => <Feather name="log-in" size={size} color={colors.appBg} />}
                 >
-                  <LinearGradient
-                    colors={[colors.primaryPurple, colors.secondaryPurple]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={[styles.loginButton, isCompact && styles.loginButtonCompact]}
-                  >
-                    <Feather name="log-in" size={20} color={colors.neonGreen} />
-                    <Text style={[styles.loginButtonText, { color: colors.neonGreen }]}>
-                      {submitting && submittingMode === 'password' ? 'Authorizing...' : 'Enter'}
-                    </Text>
-                  </LinearGradient>
-                </TouchableOpacity>
+                  {submitting && submittingMode === 'password' ? t('Authorizing...') : t('Enter')}
+                </Button>
 
                 {/* Divider */}
                 <View style={styles.dividerContainer}>
-                  <View style={[styles.dividerLine, { backgroundColor: colors.cardBorder }]} />
-                  <Text style={[styles.dividerText, { color: colors.textMuted }]}>OR</Text>
-                  <View style={[styles.dividerLine, { backgroundColor: colors.cardBorder }]} />
+                  <Divider style={[styles.dividerLine, { backgroundColor: colors.cardBorder }]} />
+                  <Text style={[styles.dividerText, { color: colors.textMuted }]}>{t('OR')}</Text>
+                  <Divider style={[styles.dividerLine, { backgroundColor: colors.cardBorder }]} />
                 </View>
 
                 {/* Google Link Button */}
-                <TouchableOpacity
+                <Surface
                   style={[
                     styles.googleButton,
                     { borderColor: colors.neonGreen, backgroundColor: googleBg },
                     submitting && styles.buttonDisabled,
                   ]}
-                  onPress={startGoogleLogin}
-                  disabled={submitting}
-                  testID="login-google"
+                  elevation={0}
                 >
-                  <View style={[styles.googleContent, isCompact && styles.googleContentCompact]}>
-                    <View style={[styles.googleIconBox, { backgroundColor: `${colors.neonGreen}20` }]}>
-                      <Feather name="globe" size={20} color={colors.neonGreen} />
+                  <TouchableRipple
+                    onPress={startGoogleLogin}
+                    disabled={submitting}
+                    testID="login-google"
+                    style={styles.googleRipple}
+                  >
+                    <View style={[styles.googleContent, isCompact && styles.googleContentCompact]}>
+                      <View style={[styles.googleIconBox, { backgroundColor: `${colors.neonGreen}20` }]}>
+                        <Feather name="globe" size={20} color={colors.neonGreen} />
+                      </View>
+                      <View style={styles.googleTextContainer}>
+                        <Text style={[styles.googleTitle, { color: colors.neonGreen }]}>
+                          {submitting && submittingMode === 'google' ? t('Linking...') : t('Initiate Google Link')}
+                        </Text>
+                        <Text style={[styles.googleSubtitle, { color: colors.textMuted }]}>
+                          {t('ROUTE THROUGH NERV SSO')}
+                        </Text>
+                      </View>
+                      <Feather name="chevron-right" size={20} color={colors.neonGreen} />
                     </View>
-                    <View style={styles.googleTextContainer}>
-                      <Text style={[styles.googleTitle, { color: colors.neonGreen }]}>
-                        {submitting && submittingMode === 'google' ? 'Linking...' : 'Initiate Google Link'}
-                      </Text>
-                      <Text style={[styles.googleSubtitle, { color: colors.textMuted }]}>
-                        ROUTE THROUGH NERV SSO
-                      </Text>
-                    </View>
-                    <Feather name="chevron-right" size={20} color={colors.neonGreen} />
-                  </View>
-                </TouchableOpacity>
+                  </TouchableRipple>
+                </Surface>
               </View>
             </BlurView>
-          </View>
+          </Surface>
 
           {/* Footer */}
           <View style={styles.footer}>
             <View style={[styles.statusIndicator, { backgroundColor: colors.neonGreen }]} />
-            <Text style={[styles.footerText, { color: colors.textMuted }]}>System Status: Online</Text>
+            <Text style={[styles.footerText, { color: colors.textMuted }]}>{t('System Status: Online')}</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </ImageBackground>
+    </View>
   );
 }
 
@@ -373,8 +274,20 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
+  glow: {
+    position: 'absolute',
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    opacity: 0.8,
+  },
+  glowTop: {
+    top: -120,
+    right: -140,
+  },
+  glowBottom: {
+    bottom: -140,
+    left: -120,
   },
   container: {
     flex: 1,
@@ -392,30 +305,30 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 480,
     marginBottom: 20,
-    borderRadius: 16,
+    borderRadius: 22,
     overflow: 'hidden',
     borderWidth: 1,
     ...Platform.select({
       ios: {
-        shadowColor: '#7f3ff2',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.3,
-        shadowRadius: 20,
+        shadowColor: '#2b2016',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.2,
+        shadowRadius: 24,
       },
       android: {
-        elevation: 8,
+        elevation: 6,
       },
     }),
   },
   glassCardCompact: {
     marginBottom: 16,
-    borderRadius: 14,
+    borderRadius: 18,
   },
   blurContainer: {
-    padding: 24,
+    padding: 26,
   },
   blurContainerCompact: {
-    padding: 18,
+    padding: 20,
   },
   logoContainer: {
     flexDirection: 'row',
@@ -426,44 +339,41 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   logoBox: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
+    width: 60,
+    height: 60,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   logoBoxCompact: {
-    width: 48,
-    height: 48,
-    borderRadius: 10,
+    width: 52,
+    height: 52,
+    borderRadius: 14,
   },
   logoText: {
     fontSize: 32,
-    fontWeight: 'bold',
   },
   logoTextContainer: {
     flex: 1,
   },
   title: {
     fontSize: 24,
-    fontWeight: 'bold',
-    letterSpacing: 3,
+    letterSpacing: 1.5,
     marginBottom: 4,
   },
   titleCompact: {
     fontSize: 20,
-    letterSpacing: 2.2,
+    letterSpacing: 1.2,
   },
   subtitle: {
     fontSize: 12,
-    letterSpacing: 1,
+    letterSpacing: 0.6,
   },
   formContainer: {
     gap: 20,
   },
   formTitle: {
     fontSize: 32,
-    fontWeight: 'bold',
     marginBottom: -8,
   },
   formTitleCompact: {
@@ -488,52 +398,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  paperInput: {
     borderRadius: 12,
-    borderWidth: 2,
-    paddingHorizontal: 16,
-    height: 56,
-  },
-  inputContainerCompact: {
-    height: 50,
-  },
-  inputIcon: {
-    marginRight: 12,
-  },
-  input: {
-    flex: 1,
     fontSize: 15,
-    height: '100%',
   },
-  eyeIcon: {
-    padding: 8,
-  },
-  loginButtonContainer: {
-    marginTop: 8,
+  paperInputCompact: {
+    minHeight: 50,
   },
   loginButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    paddingVertical: 18,
-    borderRadius: 12,
+    borderRadius: 16,
     ...Platform.select({
       ios: {
-        shadowColor: '#7f3ff2',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.5,
-        shadowRadius: 12,
+        shadowColor: '#2b2016',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 18,
       },
       android: {
-        elevation: 6,
+        elevation: 5,
       },
     }),
   },
   loginButtonCompact: {
-    paddingVertical: 14,
+    borderRadius: 14,
+  },
+  loginButtonContent: {
+    paddingVertical: 16,
+  },
+  loginButtonContentCompact: {
+    paddingVertical: 12,
   },
   loginButtonText: {
     fontSize: 16,
@@ -556,10 +449,14 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: 12,
     fontWeight: '500',
+    letterSpacing: 0.8,
   },
   googleButton: {
-    borderRadius: 12,
-    borderWidth: 2,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+  googleRipple: {
     padding: 16,
   },
   googleContent: {
@@ -582,7 +479,6 @@ const styles = StyleSheet.create({
   },
   googleTitle: {
     fontSize: 15,
-    fontWeight: '600',
     marginBottom: 2,
   },
   googleSubtitle: {

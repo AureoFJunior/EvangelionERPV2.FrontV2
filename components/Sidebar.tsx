@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, Modal, Pressable } from 'react-native';
+import React from 'react';
+import { View, StyleSheet, Image, ScrollView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { IconButton, Modal, Portal, Surface, Text, TouchableRipple } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ThemeToggle } from './ThemeToggle';
 import { useResponsive } from '../hooks/useResponsive';
+import { sidebarModules } from '../utils/sidebar/modules';
+import { useSidebarState } from '../hooks/sidebar/useSidebarState';
+import { useI18n } from '../contexts/I18nContext';
 
 interface SidebarProps {
   activeModule: string;
@@ -14,38 +18,32 @@ interface SidebarProps {
 
 export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: SidebarProps) {
   const { colors, theme, toggleTheme } = useTheme();
+  const { t } = useI18n();
   const { logout, user } = useAuth();
   const { isCompact } = useResponsive();
   const isStacked = layout === 'stacked';
   const isDrawerLayout = isStacked && isCompact;
   const baseSidebarWidth = 270;
   const showProfile = !isCompact;
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [avatarError, setAvatarError] = useState(false);
   const avatarUri = user?.avatarUrl?.trim() ?? '';
+  const { drawerOpen, setDrawerOpen, avatarError, setAvatarError } = useSidebarState(isDrawerLayout, avatarUri);
   const defaultAvatar = require('../assets/images/icon.png');
   const avatarSource = avatarUri && !avatarError ? { uri: avatarUri } : defaultAvatar;
-  const displayName = user?.name ?? 'User';
-  const displayRole = user?.role ?? user?.email ?? 'Operator';
-
-  useEffect(() => {
-    if (!isDrawerLayout) {
-      setDrawerOpen(false);
-    }
-  }, [isDrawerLayout]);
-
-  useEffect(() => {
-    setAvatarError(false);
-  }, [avatarUri]);
-
-  const modules = [
-    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
-    { id: 'products', label: 'Products', icon: 'package' },
-    { id: 'customers', label: 'Customers', icon: 'users' },
-    { id: 'orders', label: 'Orders', icon: 'shopping-cart' },
-    { id: 'employees', label: 'Employees', icon: 'briefcase' },
-    { id: 'reports', label: 'Reports', icon: 'file-text' },
-  ];
+  const displayName = user?.name ?? t('User');
+  const displayRole = user?.role ?? user?.email ?? t('Operator');
+  const navigationModules = React.useMemo(
+    () =>
+      sidebarModules.filter(
+        (module) =>
+          typeof module.id === 'string' &&
+          module.id.trim().length > 0 &&
+          typeof module.label === 'string' &&
+          module.label.trim().length > 0 &&
+          typeof module.icon === 'string' &&
+          module.icon.trim().length > 0,
+      ),
+    [],
+  );
 
   const handleSelectModule = (moduleId: string) => {
     setActiveModule(moduleId);
@@ -66,14 +64,20 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
               NERV ERP
             </Text>
             <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-              System Online
+              {t('System Online')}
             </Text>
           </View>
         </View>
         {showToggle && (
-          <TouchableOpacity onPress={onToggle} style={[styles.menuButton, { borderColor: colors.cardBorder }]}>
-            <Feather name={toggleIcon} size={18} color={colors.neonGreen} />
-          </TouchableOpacity>
+          <TouchableRipple
+            onPress={onToggle}
+            style={[styles.menuButton, { borderColor: colors.cardBorder }]}
+            rippleColor={`${colors.neonGreen}22`}
+          >
+            <View style={styles.menuButtonContent}>
+              <Feather name={toggleIcon} size={18} color={colors.neonGreen} />
+            </View>
+          </TouchableRipple>
         )}
       </View>
     </View>
@@ -81,10 +85,10 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
 
   const renderNavigation = () => (
     <View style={[styles.navigation, isStacked && styles.navigationStacked, isCompact && styles.navigationCompact]}>
-      {modules.map((module) => {
+      {navigationModules.map((module) => {
         const isActive = activeModule === module.id;
         return (
-          <TouchableOpacity
+          <TouchableRipple
             key={module.id}
             onPress={() => handleSelectModule(module.id)}
             testID={`sidebar-nav-${module.id}`}
@@ -99,22 +103,25 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
               isStacked && isCompact && styles.navButtonStackedCompact,
               isCompact && styles.navButtonCompact,
             ]}
+            rippleColor={`${colors.primaryPurple}22`}
           >
-            <Feather
-              name={module.icon as any}
-              size={20}
-              color={isActive ? colors.neonGreen : colors.textSecondary}
-            />
-            <Text
-              style={[
-                styles.navButtonText,
-                { color: isActive ? colors.neonGreen : colors.textSecondary },
-                isCompact && styles.navButtonTextCompact,
-              ]}
-            >
-              {module.label}
-            </Text>
-          </TouchableOpacity>
+            <View style={styles.navButtonContent}>
+              <Feather
+                name={module.icon as any}
+                size={20}
+                color={isActive ? colors.neonGreen : colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.navButtonText,
+                  { color: isActive ? colors.neonGreen : colors.textSecondary },
+                  isCompact && styles.navButtonTextCompact,
+                ]}
+              >
+                {t(module.label)}
+              </Text>
+            </View>
+          </TouchableRipple>
         );
       })}
     </View>
@@ -169,21 +176,24 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
         isCompact && styles.footerCompact,
       ]}
     >
-      <TouchableOpacity
+      <TouchableRipple
         style={[
           styles.logoutButton,
           isStacked && styles.logoutButtonStacked,
           isCompact && styles.logoutButtonCompact,
         ]}
         onPress={logout}
+        rippleColor={`${colors.accentOrange}22`}
         testID="sidebar-logout"
       >
-        <Feather name="log-out" size={16} color={colors.accentOrange} />
-        <Text style={[styles.logoutText, { color: colors.accentOrange }]}>Logout</Text>
-      </TouchableOpacity>
+        <View style={styles.logoutContent}>
+          <Feather name="log-out" size={16} color={colors.accentOrange} />
+          <Text style={[styles.logoutText, { color: colors.accentOrange }]}>{t('Logout')}</Text>
+        </View>
+      </TouchableRipple>
       <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, position: 'relative' }]} />
       <Text style={[styles.footerText, { color: colors.textMuted }]} numberOfLines={1}>
-        System Status: Active
+        {t('System Status: Active')}
       </Text>
     </View>
   );
@@ -211,60 +221,62 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
             <View>
               <Text style={[styles.title, { color: colors.neonGreen }, styles.titleCompact]}>NERV ERP</Text>
               <Text style={[styles.subtitle, { color: colors.textSecondary }, styles.subtitleCompact]}>
-                System Online
+                {t('System Online')}
               </Text>
             </View>
           </View>
           <View style={styles.topBarActions}>
-            <TouchableOpacity
-              style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+            <IconButton
+              icon={() => (
+                <Feather name={theme === 'light' ? 'sun' : 'moon'} size={16} color={colors.neonGreen} />
+              )}
+              size={18}
               onPress={toggleTheme}
-            >
-              <Feather name={theme === 'light' ? 'sun' : 'moon'} size={16} color={colors.neonGreen} />
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+            />
+            <IconButton
+              icon={() => <Feather name="log-out" size={16} color={colors.accentOrange} />}
+              size={18}
               onPress={logout}
-            >
-              <Feather name="log-out" size={16} color={colors.accentOrange} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.menuButton, { borderColor: colors.cardBorder }]}
+              style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+            />
+            <IconButton
+              icon={() => <Feather name="menu" size={18} color={colors.neonGreen} />}
+              size={20}
               onPress={() => setDrawerOpen(true)}
-            >
-              <Feather name="menu" size={18} color={colors.neonGreen} />
-            </TouchableOpacity>
+              testID="sidebar-menu"
+              style={[styles.menuButton, { borderColor: colors.cardBorder }]}
+            />
           </View>
         </View>
 
-        <Modal
-          visible={drawerOpen}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setDrawerOpen(false)}
-        >
-          <View style={styles.drawerBackdrop}>
-            <Pressable style={styles.backdropPressable} onPress={() => setDrawerOpen(false)} />
-            <View
+        <Portal>
+          <Modal
+            visible={drawerOpen}
+            onDismiss={() => setDrawerOpen(false)}
+            contentContainerStyle={styles.drawerBackdrop}
+          >
+            <Surface
               style={[
                 styles.drawerPanel,
                 { backgroundColor: colors.sidebarBgFrom, borderColor: colors.cardBorder },
               ]}
+              elevation={2}
             >
               {renderHeader(true, 'x', () => setDrawerOpen(false))}
               <ScrollView style={styles.drawerScroll} contentContainerStyle={styles.drawerContent}>
                 {renderMenuContent()}
               </ScrollView>
               {renderFooter()}
-            </View>
-          </View>
-        </Modal>
+            </Surface>
+          </Modal>
+        </Portal>
       </View>
     );
   }
 
   return (
-    <View
+    <Surface
       style={[
         styles.container,
         {
@@ -275,23 +287,21 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
           borderBottomWidth: isStacked ? 2 : 0,
         },
       ]}
+      elevation={0}
     >
       <ScrollView style={styles.scrollView} contentContainerStyle={isStacked ? styles.scrollContent : undefined}>
         {renderHeader(false, 'menu', () => undefined)}
         {renderMenuContent()}
       </ScrollView>
       {renderFooter()}
-    </View>
+    </Surface>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     width: 270,
-    borderRightWidth: 2,
-    flexDirection: 'column',
-    width: 270,
-    borderRightWidth: 2,
+    borderRightWidth: 1,
     flexDirection: 'column',
     flexShrink: 0,
   },
@@ -306,7 +316,7 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 24,
-    borderBottomWidth: 2,
+    borderBottomWidth: 1,
   },
   headerRow: {
     flexDirection: 'row',
@@ -329,8 +339,8 @@ const styles = StyleSheet.create({
   logoBox: {
     width: 44,
     height: 44,
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: 12,
+    borderWidth: 1,
     overflow: 'hidden',
   },
   logoBoxCompact: {
@@ -344,8 +354,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
-    fontWeight: 'bold',
-    letterSpacing: 2,
+    letterSpacing: 1,
   },
   titleCompact: {
     fontSize: 14,
@@ -360,15 +369,19 @@ const styles = StyleSheet.create({
   menuButton: {
     width: 36,
     height: 36,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuButtonContent: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   topBar: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -382,8 +395,8 @@ const styles = StyleSheet.create({
   actionButton: {
     width: 34,
     height: 34,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    borderRadius: 12,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -393,12 +406,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 16,
   },
-  backdropPressable: {
-    ...StyleSheet.absoluteFillObject,
-  },
   drawerPanel: {
-    borderRadius: 16,
-    borderWidth: 2,
+    borderRadius: 20,
+    borderWidth: 1,
     overflow: 'hidden',
     maxHeight: '92%',
     width: '100%',
@@ -411,13 +421,13 @@ const styles = StyleSheet.create({
   },
   profileSection: {
     padding: 16,
-    borderBottomWidth: 2,
+    borderBottomWidth: 1,
   },
   profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 14,
     borderWidth: 1,
     gap: 12,
   },
@@ -452,7 +462,7 @@ const styles = StyleSheet.create({
   },
   themeSection: {
     padding: 16,
-    borderBottomWidth: 2,
+    borderBottomWidth: 1,
   },
   themeSectionCompact: {
     padding: 12,
@@ -467,8 +477,8 @@ const styles = StyleSheet.create({
   navigationStacked: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    columnGap: 10,
-    rowGap: 10,
+    justifyContent: 'space-between',
+    rowGap: 0,
   },
   navButton: {
     flexDirection: 'row',
@@ -476,31 +486,41 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
+    minHeight: 48,
+  },
+  navButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    width: '100%',
   },
   navButtonCompact: {
     paddingVertical: 10,
     paddingHorizontal: 12,
   },
   navButtonStacked: {
-    minWidth: '47%',
-    flexGrow: 1,
+    width: '48.8%',
+    maxWidth: '48.8%',
+    flexGrow: 0,
+    marginBottom: 10,
   },
   navButtonStackedCompact: {
-    minWidth: '100%',
+    width: '100%',
+    maxWidth: '100%',
+    marginBottom: 8,
   },
   navButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    letterSpacing: 0.5,
+    letterSpacing: 0.2,
   },
   navButtonTextCompact: {
     fontSize: 13,
   },
   footer: {
     padding: 16,
-    borderTopWidth: 2,
+    borderTopWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -522,10 +542,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  logoutContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   logoutButtonStacked: {
     paddingVertical: 6,
     paddingHorizontal: 8,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   logoutButtonCompact: {
     paddingVertical: 4,
@@ -533,6 +558,5 @@ const styles = StyleSheet.create({
   },
   logoutText: {
     fontSize: 12,
-    fontWeight: '600',
   },
 });

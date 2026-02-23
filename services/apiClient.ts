@@ -91,6 +91,71 @@ export class ApiClient {
     }
   }
 
+  async requestBinary<TBody = unknown>(options: ApiRequestOptions<TBody>): Promise<ApiResponse<ArrayBuffer>> {
+    const controller = options.signal ? undefined : new AbortController();
+    const signal = options.signal ?? controller?.signal;
+    const timeoutId =
+      controller && this.config.timeoutMs
+        ? setTimeout(() => controller.abort(), this.config.timeoutMs)
+        : undefined;
+
+    try {
+      const url = this.buildUrl(options.path, options.query);
+      const headers = this.buildHeaders(options);
+      const init: RequestInit = {
+        method: options.method ?? 'GET',
+        headers,
+        signal,
+      };
+
+      if (options.body !== undefined) {
+        init.body =
+          typeof options.body === 'string' || options.body instanceof FormData
+            ? (options.body as BodyInit)
+            : JSON.stringify(options.body);
+      }
+
+      const response = await fetch(url, init);
+      const responseClone = response.clone();
+      const data = response.ok ? await response.arrayBuffer() : null;
+      let errorMessage: string | undefined;
+
+      if (!response.ok) {
+        try {
+          const text = await responseClone.text();
+          errorMessage = text ? `${text} (status ${response.status})` : undefined;
+        } catch {
+          errorMessage = undefined;
+        }
+      }
+
+      const apiResponse: ApiResponse<ArrayBuffer> = {
+        data,
+        ok: response.ok,
+        status: response.status,
+        error: errorMessage ?? (response.ok ? undefined : `Failed to sync (status ${response.status})`),
+        headers: this.headersToRecord(response.headers),
+      };
+
+      return apiResponse;
+    } catch (error: any) {
+      const isAbort = error?.name === 'AbortError';
+      const baseMessage = isAbort ? 'Request timed out' : 'Failed to sync';
+      const message = `${baseMessage} (status 0)`;
+      return {
+        data: null,
+        ok: false,
+        status: 0,
+        error: message,
+        headers: {},
+      };
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
   private buildUrl(path: string, query?: Record<string, string | number | boolean | undefined | null>) {
     const sanitizedBase = this.config.baseUrl.replace(/\/$/, '');
     const sanitizedPath = path.startsWith('http')

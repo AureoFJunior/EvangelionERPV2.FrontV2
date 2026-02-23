@@ -19,6 +19,14 @@ module.exports = defineConfig({
     baseUrl: resolveBaseUrl(),
     specPattern: 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}',
     supportFile: 'cypress/support/e2e.js',
+    env: {
+      API_BASE_URL:
+        process.env.CYPRESS_API_BASE_URL ||
+        process.env.EXPO_PUBLIC_API_BASE_URL ||
+        'http://localhost:5002/api/v1',
+      ADMIN_USERNAME: process.env.CYPRESS_ADMIN_USERNAME || 'admin',
+      ADMIN_PASSWORD: process.env.CYPRESS_ADMIN_PASSWORD || '1234',
+    },
   },
   video: false,
 });

@@ -36,11 +36,13 @@ export class AuthService {
   }
 
   login(credentials: AuthCredentials): Promise<ApiResponse<AuthTokens>> {
-    const path = `${this.authPath}/${encodeURIComponent(credentials.username)}/${encodeURIComponent(credentials.password)}`;
-    // Endpoint uses path params; defaults to GET
-    return this.client.request<AuthTokens>({
-      path,
-      method: 'GET',
+    return this.client.request<AuthTokens, { userName: string; password: string }>({
+      path: this.authPath,
+      method: 'POST',
+      body: {
+        userName: credentials.username,
+        password: credentials.password,
+      },
       withAuth: false,
     });
   }

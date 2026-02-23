@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from './AuthContext';
 
 type Theme = 'light' | 'dark';
 
@@ -71,29 +72,102 @@ const darkColors: ThemeColors = {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+const THEME_STORAGE_PREFIX = 'theme';
+
+const resolveTheme = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.toLowerCase();
+  if (normalized.includes('light') || normalized.includes('day')) {
+    return 'light' as const;
+  }
+  if (normalized.includes('dark') || normalized.includes('night')) {
+    return 'dark' as const;
+  }
+  return null;
+};
+
+const themeToActualTheme = (value: Theme) => (value === 'light' ? 1 : 0);
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  const { user, isAuthenticated, loading: authLoading, client, setUserTheme } = useAuth();
   const [theme, setTheme] = useState<Theme>('dark');
+  const lastUserKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    loadTheme();
-  }, []);
-
-  const loadTheme = async () => {
-    try {
-      const savedTheme = await AsyncStorage.getItem('theme');
-      if (savedTheme === 'light' || savedTheme === 'dark') {
-        setTheme(savedTheme);
-      }
-    } catch (error) {
-      console.error('Error loading theme:', error);
+    if (authLoading) {
+      return;
     }
-  };
+
+    const userKey =
+      user?.id?.toString() ||
+      user?.email?.trim() ||
+      user?.name?.trim() ||
+      null;
+
+    if (!isAuthenticated || !userKey) {
+      return;
+    }
+
+    if (lastUserKeyRef.current === userKey && theme) {
+      return;
+    }
+
+    const storedKey = `${THEME_STORAGE_PREFIX}:${userKey}`;
+    const backendTheme = resolveTheme(user?.theme ?? null);
+
+    const loadTheme = async () => {
+      try {
+        if (backendTheme) {
+          setTheme(backendTheme);
+          await AsyncStorage.setItem(storedKey, backendTheme);
+          lastUserKeyRef.current = userKey;
+          return;
+        }
+
+        const savedTheme = await AsyncStorage.getItem(storedKey);
+        const resolved = resolveTheme(savedTheme);
+        if (resolved) {
+          setTheme(resolved);
+        }
+        lastUserKeyRef.current = userKey;
+      } catch (error) {
+        console.error('Error loading theme:', error);
+      }
+    };
+
+    loadTheme();
+  }, [authLoading, isAuthenticated, user, theme]);
 
   const toggleTheme = async () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
+
+    const userKey =
+      user?.id?.toString() ||
+      user?.email?.trim() ||
+      user?.name?.trim() ||
+      null;
+
+    if (userKey) {
+      try {
+        await AsyncStorage.setItem(`${THEME_STORAGE_PREFIX}:${userKey}`, newTheme);
+      } catch (error) {
+        console.error('Error saving theme:', error);
+      }
+    }
+
+    await setUserTheme(newTheme);
+
     try {
-      await AsyncStorage.setItem('theme', newTheme);
+      if (isAuthenticated && userKey) {
+        await client.request({
+          path: '/User/UpdateTheme',
+          method: 'PUT',
+          body: { theme: themeToActualTheme(newTheme) },
+        });
+      }
     } catch (error) {
       console.error('Error saving theme:', error);
     }

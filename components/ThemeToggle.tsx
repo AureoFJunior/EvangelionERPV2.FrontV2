@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
+import { useI18n } from '../contexts/I18nContext';
 
 export function ThemeToggle() {
   const { theme, toggleTheme, colors } = useTheme();
+  const { t } = useI18n();
 
   return (
     <TouchableOpacity
@@ -12,14 +14,15 @@ export function ThemeToggle() {
       testID="theme-toggle"
       style={[styles.container, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
     >
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Theme</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>{t('Theme')}</Text>
       <View style={styles.toggleContainer}>
         <Feather
           name={theme === 'light' ? 'sun' : 'moon'}
           size={20}
           color={colors.neonGreen}
         />
-        <View style={[styles.switch, { backgroundColor: `${colors.cardBorder}50` }]}>
+        <View style={[styles.switch, { backgroundColor: `${colors.cardBorder}50` }]}
+        >
           <View
             style={[
               styles.switchThumb,

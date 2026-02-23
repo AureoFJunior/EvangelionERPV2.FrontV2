@@ -1,85 +1,41 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, StyleSheet, ScrollView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { Button, Text } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { ErpService, Report as ReportModel } from '../services/erpService';
+import { useI18n } from '../contexts/I18nContext';
+import { ErpService } from '../services/erpService';
 import { NervLoader } from './NervLoader';
 import { useResponsive } from '../hooks/useResponsive';
+import { useReportsData } from '../hooks/reports/useReportsData';
+import { ReportQuickStatCard } from './reports/ReportQuickStatCard';
+import { ReportItemCard } from './reports/ReportItemCard';
 
 export function Reports() {
   const { colors } = useTheme();
+  const { t } = useI18n();
   const { client, isAuthenticated, loading: authLoading } = useAuth();
   const erpService = useMemo(() => new ErpService(client), [client]);
   const { isCompact, contentPadding } = useResponsive();
-  const [reports, setReports] = useState<ReportModel[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isAuthenticated || authLoading) {
-      return;
-    }
-
-    let active = true;
-
-    const loadReports = async () => {
-      setLoading(true);
-      setErrorMessage(null);
-
-      const response = await erpService.fetchReports();
-      if (!active) {
-        return;
-      }
-
-      if (response.ok && response.data) {
-        setReports(response.data);
-      } else {
-        setErrorMessage(response.error ?? 'Unable to load reports');
-      }
-
-      setLoading(false);
-    };
-
-    loadReports();
-
-    return () => {
-      active = false;
-    };
-  }, [erpService, isAuthenticated, authLoading]);
-
-  const reportsThisMonth = useMemo(() => {
-    const now = new Date();
-    return reports.filter((report) => {
-      const reportDate = new Date(report.date);
-      return reportDate.getFullYear() === now.getFullYear() && reportDate.getMonth() === now.getMonth();
-    }).length;
-  }, [reports]);
-
-  const reportsToday = useMemo(() => {
-    const today = new Date();
-    return reports.filter((report) => {
-      const reportDate = new Date(report.date);
-      return (
-        reportDate.getFullYear() === today.getFullYear() &&
-        reportDate.getMonth() === today.getMonth() &&
-        reportDate.getDate() === today.getDate()
-      );
-    }).length;
-  }, [reports]);
+  const { reports, loading, errorMessage, reportsThisMonth, reportsToday } = useReportsData({
+    erpService,
+    isAuthenticated,
+    authLoading,
+  });
 
   const quickStats = [
-    { label: 'Total Reports', value: String(reports.length), icon: 'file-text', color: colors.primaryPurple },
-    { label: 'This Month', value: String(reportsThisMonth), icon: 'calendar', color: colors.neonGreen },
-    { label: 'Generated Today', value: String(reportsToday), icon: 'activity', color: colors.accentOrange },
+    { label: t('Total Reports'), value: String(reports.length), icon: 'file-text', color: colors.primaryPurple },
+    { label: t('This Month'), value: String(reportsThisMonth), icon: 'calendar', color: colors.neonGreen },
+    { label: t('Generated Today'), value: String(reportsToday), icon: 'activity', color: colors.accentOrange },
   ];
 
   if (loading) {
     return (
       <NervLoader
         fullScreen
-        label="Synchronizing EVA-01"
-        subtitle="LCL circulation nominal | Loading reports..."
+        label={t('Synchronizing EVA-01')}
+        subtitle={t('LCL circulation nominal | Loading reports...')}
       />
     );
   }
@@ -90,10 +46,10 @@ export function Reports() {
         {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-            REPORTS & ANALYTICS
+            {t('REPORTS & ANALYTICS')}
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-            Generate and view business intelligence reports
+            {t('Generate and view business intelligence reports')}
           </Text>
           <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
         </View>
@@ -101,7 +57,7 @@ export function Reports() {
         {!isAuthenticated && !authLoading && (
           <View style={[styles.banner, { backgroundColor: `${colors.primaryPurple}15`, borderColor: colors.primaryPurple }]}>
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>
-              Authenticate to load live reports.
+              {t('Authenticate to load live reports.')}
             </Text>
           </View>
         )}
@@ -115,84 +71,52 @@ export function Reports() {
         {!loading && reports.length === 0 && (
           <View style={[styles.emptyState, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
             <Feather name="file-text" size={20} color={colors.textMuted} />
-            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No reports yet</Text>
+            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>{t('No reports yet')}</Text>
             <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-              Generate or fetch reports to see them listed here.
+              {t('Generate or fetch reports to see them listed here.')}
             </Text>
           </View>
         )}
 
         {/* Quick Stats */}
         <View style={[styles.statsContainer, isCompact && styles.statsContainerCompact]}>
-          {quickStats.map((stat, index) => (
-            <View
-              key={index}
-              style={[
-                styles.statCard,
-                { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-                isCompact && styles.statCardCompact,
-              ]}
-            >
-              <View style={[styles.statIcon, { backgroundColor: `${stat.color}20` }]}>
-                <Feather name={stat.icon as any} size={24} color={stat.color} />
-              </View>
-              <Text style={[styles.statValue, { color: colors.textPrimary }]}>{stat.value}</Text>
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{stat.label}</Text>
-            </View>
+          {quickStats.map((stat) => (
+            <ReportQuickStatCard
+              key={stat.label}
+              label={stat.label}
+              value={stat.value}
+              icon={stat.icon}
+              color={stat.color}
+              colors={colors}
+              isCompact={isCompact}
+            />
           ))}
         </View>
 
         {/* Generate Report Button */}
-        <TouchableOpacity style={[styles.generateButton, { backgroundColor: colors.primaryPurple }]}>
-          <Feather name="plus-circle" size={20} color={colors.neonGreen} />
-          <Text style={[styles.generateButtonText, { color: colors.neonGreen }]}>Generate New Report</Text>
-        </TouchableOpacity>
+        <Button
+          mode="contained"
+          onPress={() => undefined}
+          icon={({ size }) => <Feather name="plus-circle" size={size} color={colors.neonGreen} />}
+          buttonColor={colors.primaryPurple}
+          textColor={colors.neonGreen}
+          style={styles.generateButton}
+          contentStyle={styles.generateButtonContent}
+        >
+          {t('Generate New Report')}
+        </Button>
 
         {/* Recent Reports */}
-        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Reports</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Recent Reports')}</Text>
 
         <View style={styles.reportsList}>
           {reports.map((report) => (
-            <View
+            <ReportItemCard
               key={report.id}
-              style={[styles.reportCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-            >
-              <View style={styles.reportHeader}>
-                <View style={[styles.reportIcon, { backgroundColor: `${colors.primaryPurple}20` }]}>
-                  <Feather name={report.icon as any} size={24} color={colors.primaryPurple} />
-                </View>
-                <View style={styles.reportInfo}>
-                  <Text style={[styles.reportTitle, { color: colors.textPrimary }]}>{report.title}</Text>
-                  <Text style={[styles.reportDescription, { color: colors.textSecondary }]}>
-                    {report.description}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.reportMeta}>
-                <View style={styles.metaItem}>
-                  <Feather name="tag" size={14} color={colors.primaryPurple} />
-                  <Text style={[styles.metaText, { color: colors.textSecondary }]}>{report.type}</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <Feather name="calendar" size={14} color={colors.primaryPurple} />
-                  <Text style={[styles.metaText, { color: colors.textSecondary }]}>{report.date}</Text>
-                </View>
-              </View>
-
-              <View style={[styles.reportActions, isCompact && styles.reportActionsCompact]}>
-                <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primaryPurple }]}>
-                  <Feather name="eye" size={16} color={colors.neonGreen} />
-                  <Text style={[styles.actionButtonText, { color: colors.neonGreen }]}>View</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionButton, { backgroundColor: 'transparent', borderWidth: 2, borderColor: colors.cardBorder }]}
-                >
-                  <Feather name="download" size={16} color={colors.primaryPurple} />
-                  <Text style={[styles.actionButtonText, { color: colors.primaryPurple }]}>Export</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+              report={report}
+              colors={colors}
+              isCompact={isCompact}
+            />
           ))}
         </View>
       </View>
@@ -212,8 +136,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    letterSpacing: 2,
+    letterSpacing: 1,
     marginBottom: 8,
   },
   titleCompact: {
@@ -268,10 +191,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    padding: 16,
     borderRadius: 8,
-    borderWidth: 2,
-    alignItems: 'center',
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 6,
@@ -281,6 +201,10 @@ const styles = StyleSheet.create({
   statCardCompact: {
     width: '100%',
     flex: 0,
+  },
+  statCardContent: {
+    padding: 16,
+    alignItems: 'center',
   },
   statIcon: {
     padding: 12,
@@ -297,17 +221,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   generateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 16,
     borderRadius: 8,
     marginBottom: 32,
   },
-  generateButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+  generateButtonContent: {
+    paddingVertical: 8,
   },
   sectionTitle: {
     fontSize: 20,
@@ -318,14 +236,15 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   reportCard: {
-    padding: 16,
     borderRadius: 8,
-    borderWidth: 2,
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
+  },
+  reportCardContent: {
+    padding: 16,
   },
   reportHeader: {
     flexDirection: 'row',
@@ -374,16 +293,12 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
     borderRadius: 8,
   },
-  actionButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
+  actionButtonContent: {
+    paddingVertical: 6,
+  },
+  actionButtonOutline: {
+    borderWidth: 2,
   },
 });

@@ -12,6 +12,7 @@ import Svg, {
   Line,
 } from 'react-native-svg';
 import { useTheme } from '../contexts/ThemeContext';
+import { useI18n } from '../contexts/I18nContext';
 
 type NervLoaderProps = {
   label?: string;
@@ -25,16 +26,19 @@ type NervLoaderProps = {
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
 export function NervLoader({
-  label = 'Synchronizing EVA-01',
-  subtitle = 'LCL circulation nominal | Loading...',
+  label,
+  subtitle,
   size = 200,
   fullScreen = false,
   inline = false,
   style,
 }: NervLoaderProps) {
   const { colors } = useTheme();
+  const { t } = useI18n();
   const spin = useRef(new Animated.Value(0)).current;
   const fill = useRef(new Animated.Value(0)).current;
+  const resolvedLabel = label ?? t('Synchronizing EVA-01');
+  const resolvedSubtitle = subtitle ?? t('LCL circulation nominal | Loading...');
 
   useEffect(() => {
     const spinLoop = Animated.loop(
@@ -247,7 +251,7 @@ export function NervLoader({
       </View>
 
       <View style={[styles.textBlock, inline && styles.inlineTextBlock]}>
-        {!!label && (
+        {!!resolvedLabel && (
           <Text
             style={[
               styles.loadingTitle,
@@ -255,10 +259,10 @@ export function NervLoader({
               { color: colors.textPrimary },
             ]}
           >
-            {label}
+            {resolvedLabel}
           </Text>
         )}
-        {!!subtitle && (
+        {!!resolvedSubtitle && (
           <Text
             style={[
               styles.loadingSubtitle,
@@ -266,7 +270,7 @@ export function NervLoader({
               { color: colors.textSecondary },
             ]}
           >
-            {subtitle}
+            {resolvedSubtitle}
           </Text>
         )}
       </View>

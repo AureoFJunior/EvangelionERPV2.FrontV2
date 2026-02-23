@@ -1,20 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { Provider as PaperProvider } from 'react-native-paper';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Sidebar } from './components/Sidebar';
-import { Dashboard } from './components/Dashboard';
-import { Products } from './components/Products';
-import { Customers } from './components/Customers';
-import { Orders } from './components/Orders';
-import { Employees } from './components/Employees';
-import { Reports } from './components/Reports';
-import { Login } from './components/Login';
+import { I18nProvider, useI18n } from './contexts/I18nContext';
+import { Sidebar } from './features/sidebar/components/Sidebar';
+import { Dashboard } from './features/dashboard/components/Dashboard';
+import { Products } from './features/products/components/Products';
+import { Customers } from './features/customers/components/Customers';
+import { Orders } from './features/orders/components/Orders';
+import { Bills } from './features/bills/components/Bills';
+import { PayableBills } from './features/payables/components/PayableBills';
+import { Forecast } from './features/forecast/components/Forecast';
+import { Employees } from './features/employees/components/Employees';
+import { Reports } from './features/reports/components/Reports';
+import { UserProfile } from './features/profile/components/UserProfile';
+import { Login } from './features/auth/components/Login';
 import { useResponsive } from './hooks/useResponsive';
 
 function LoadingScreen() {
   const { colors } = useTheme();
+  const { t } = useI18n();
   const pulse = useRef(new Animated.Value(0)).current;
   const spin = useRef(new Animated.Value(0)).current;
 
@@ -98,9 +105,9 @@ function LoadingScreen() {
           { backgroundColor: colors.primaryPurple, borderColor: colors.neonGreen },
         ]}
       />
-      <Text style={[styles.loadingLabel, { color: colors.textPrimary }]}>BOOTING NERV SYSTEMS</Text>
+      <Text style={[styles.loadingLabel, { color: colors.textPrimary }]}>{t('BOOTING NERV SYSTEMS')}</Text>
       <Text style={[styles.loadingSub, { color: colors.textSecondary }]}>
-        Synchronizing EVA-01 | LCL pressure stable
+        {t('Synchronizing EVA-01 | LCL pressure stable')}
       </Text>
     </View>
   );
@@ -123,10 +130,18 @@ function AppContent() {
         return <Customers />;
       case 'orders':
         return <Orders />;
+      case 'bills':
+        return <Bills />;
+      case 'payables':
+        return <PayableBills />;
+      case 'forecast':
+        return <Forecast />;
       case 'employees':
         return <Employees />;
       case 'reports':
         return <Reports />;
+      case 'profile':
+        return <UserProfile />;
       default:
         return <Dashboard />;
     }
@@ -174,9 +189,13 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <ThemeProvider>
-          <AppContent />
-        </ThemeProvider>
+        <I18nProvider>
+          <ThemeProvider>
+            <PaperProvider>
+              <AppContent />
+            </PaperProvider>
+          </ThemeProvider>
+        </I18nProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
