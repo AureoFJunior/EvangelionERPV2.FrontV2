@@ -31,7 +31,7 @@ interface ThemeContextType {
 }
 
 const lightColors: ThemeColors = {
-  appBg: '#f6f7fb',
+  appBg: '#f1f3fa',
   appText: '#0f1221',
   cardBgFrom: '#ffffff',
   cardBgTo: '#f4f5ff',
@@ -51,7 +51,7 @@ const lightColors: ThemeColors = {
 };
 
 const darkColors: ThemeColors = {
-  appBg: '#0b0c14',
+  appBg: '#0f1322',
   appText: '#e6e8f5',
   cardBgFrom: '#111325',
   cardBgTo: '#0c0f1e',

@@ -26,6 +26,7 @@ interface AuthContextValue {
   loginWithGoogle: (idToken: string) => Promise<AuthTokens>;
   loginWithGoogleCode: (payload: GoogleCodeExchangePayload) => Promise<AuthTokens>;
   setUserLanguage: (language: AppLanguage | null) => Promise<void>;
+  setUserProfilePicture: (avatarUrl: string | null) => Promise<void>;
   setUserTheme: (theme: UserTheme | null) => Promise<void>;
   logout: () => Promise<void>;
   client: ApiClient;
@@ -367,6 +368,8 @@ const resolveUserProfile = (
       'picture',
       'avatar',
       'avatarUrl',
+      'profilePicture',
+      'ProfilePicture',
       'avatar_url',
       'profileImage',
       'profile_image',
@@ -714,6 +717,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(updated));
   }, []);
 
+  const updateStoredAvatarUrl = useCallback(async (nextAvatarUrl: string | null) => {
+    const stored = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!stored) {
+      return;
+    }
+
+    let session: StoredSession | null = null;
+    try {
+      session = JSON.parse(stored) as StoredSession;
+    } catch {
+      return;
+    }
+
+    if (!session?.token) {
+      return;
+    }
+
+    const currentAvatar = pickFirstString(session.user?.avatarUrl) ?? null;
+    const normalizedNext = pickFirstString(nextAvatarUrl) ?? null;
+    if (currentAvatar === normalizedNext) {
+      return;
+    }
+
+    const updated: StoredSession = {
+      ...session,
+      user: session.user ? { ...session.user, avatarUrl: normalizedNext } : session.user,
+    };
+    await AsyncStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(updated));
+  }, []);
+
   useEffect(() => {
     if (!token || !enterpriseId) {
       enterpriseCurrencyRef.current = null;
@@ -828,6 +861,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [client, token, user, updateStoredLanguage],
   );
 
+  const setUserProfilePicture = useCallback(
+    async (avatarUrl: string | null) => {
+      const normalizedAvatar = pickFirstString(avatarUrl) ?? '';
+
+      const response = await client.request<Record<string, any>, { profilePicture: string }>({
+        path: '/User/UpdateProfilePicture',
+        method: 'PUT',
+        body: { profilePicture: normalizedAvatar },
+      });
+
+      if (!response.ok) {
+        throw new Error(response.error ?? 'Unable to update profile picture');
+      }
+
+      const resolvedUser = resolveUserProfile(response.data, token, {
+        ...(user ?? { name: 'User' }),
+        avatarUrl: normalizedAvatar || null,
+      });
+
+      setUser(resolvedUser);
+      await updateStoredAvatarUrl(resolvedUser.avatarUrl ?? (normalizedAvatar || null));
+    },
+    [client, token, user, updateStoredAvatarUrl],
+  );
+
   const login = useCallback(
     async (credentials: AuthCredentials) => {
       const response = await authService.login(credentials);
@@ -870,6 +928,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginWithGoogle,
       loginWithGoogleCode,
       setUserLanguage,
+      setUserProfilePicture,
       setUserTheme,
       logout,
       client,
@@ -884,6 +943,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginWithGoogle,
       loginWithGoogleCode,
       setUserLanguage,
+      setUserProfilePicture,
       setUserTheme,
       logout,
     ],

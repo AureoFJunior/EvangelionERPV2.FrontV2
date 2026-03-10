@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { Card } from "./ui/Paper";
@@ -12,7 +12,6 @@ import { formatCurrency } from "../utils/currency";
 import { useDashboardData } from "../hooks/dashboard/useDashboardData";
 import {
   buildActivities,
-  buildCategoryData,
   buildCreatedAtSeries,
   buildDashboardTotals,
   buildMonthlyBuckets,
@@ -22,10 +21,9 @@ import {
   VictoryChart,
   VictoryLine,
   VictoryBar,
-  VictoryPie,
+  VictoryScatter,
   VictoryAxis,
   VictoryTheme,
-  VictoryLabel,
 } from "victory-native";
 
 export function Dashboard() {
@@ -34,10 +32,12 @@ export function Dashboard() {
   const { client, isAuthenticated, loading: authLoading, currency, enterpriseId } = useAuth();
   const erpService = useMemo(() => new ErpService(client), [client]);
   const { width, isCompact, isTablet, contentPadding, cardGap } = useResponsive();
-  const chartWidth = Math.min(Math.max(width - contentPadding * 2 - 8, 260), isTablet ? 420 : 360);
-  const chartHeight = isCompact ? 220 : 250;
-  const pieRadius = Math.min(chartWidth / 2 - 12, isCompact ? 90 : 115);
-  const pieInnerRadius = Math.round(pieRadius * 0.6);
+  const chartCardWidth = Math.min(Math.max(width - contentPadding * 2, 320), 1400);
+  const chartInnerHorizontalPadding = isCompact ? 28 : isTablet ? 32 : 36;
+  const chartWidth = Math.max(chartCardWidth - chartInnerHorizontalPadding, 300);
+  const chartHeight = isCompact ? 240 : isTablet ? 300 : 340;
+  const [activeProductPoint, setActiveProductPoint] = useState<{ x: string; y: number } | null>(null);
+  const [activeOrderPoint, setActiveOrderPoint] = useState<{ x: string; y: number } | null>(null);
 
   const { products, orders, customers, loading, errorMessage } = useDashboardData({
     erpService,
@@ -57,8 +57,35 @@ export function Dashboard() {
     () => buildOrderDateSeries(monthlyBuckets, orders),
     [orders, monthlyBuckets],
   );
-
-  const categoryData = useMemo(() => buildCategoryData(products), [products]);
+  const productChartData = useMemo(
+    () =>
+      monthlyBuckets.map((bucket, index) => ({
+        x: index + 1,
+        label: bucket.label,
+        y: Number(productData[index]?.y ?? 0),
+      })),
+    [monthlyBuckets, productData],
+  );
+  const orderChartData = useMemo(
+    () =>
+      monthlyBuckets.map((bucket, index) => ({
+        x: index + 1,
+        label: bucket.label,
+        y: Number(orderData[index]?.y ?? 0),
+      })),
+    [monthlyBuckets, orderData],
+  );
+  const maxProductY = Math.max(1, ...productChartData.map((item) => item.y));
+  const maxOrderY = Math.max(1, ...orderChartData.map((item) => item.y));
+  const xTickValues = monthlyBuckets.map((_, index) => index + 1);
+  const productDomainMaxY = Math.max(1, maxProductY * 1.2);
+  const orderDomainMaxY = Math.max(1, maxOrderY * 1.25);
+  const productDomainMinY = maxProductY <= 1 ? -0.25 : -Math.max(0.5, maxProductY * 0.08);
+  const orderDomainMinY = maxOrderY <= 1 ? -0.2 : -Math.max(0.35, maxOrderY * 0.08);
+  const orderBarWidth = Math.max(
+    isCompact ? 14 : 18,
+    Math.min(48, Math.round(chartWidth / Math.max(orderChartData.length * 2.1, 8))),
+  );
 
   const activities = useMemo(() => buildActivities(orders, products), [orders, products]);
 
@@ -101,6 +128,7 @@ export function Dashboard() {
   if (loading) {
     return (
       <NervLoader
+        variant="dashboard"
         fullScreen
         label={t('Synchronizing EVA-01')}
         subtitle={t('LCL circulation nominal - Loading dashboard...')}
@@ -109,7 +137,7 @@ export function Dashboard() {
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}> 
+    <ScrollView style={styles.container}> 
       <View style={[styles.content, { padding: contentPadding }]}>
         {/* Header */}
         <View style={styles.header}>
@@ -172,113 +200,270 @@ export function Dashboard() {
         </View>
 
         {/* Charts */}
-        <Card mode="outlined" style={[styles.chartCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+        <Card
+          mode="outlined"
+          style={[
+            styles.chartCard,
+            styles.chartCardSized,
+            { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+          ]}
+        >
           <Card.Content style={styles.chartCardContent}>
             <Text style={[styles.chartTitle, { color: colors.neonGreen }, isCompact && styles.chartTitleCompact]}>
               {t('Product Analytics')}
             </Text>
-            <VictoryChart
-              width={chartWidth}
-              height={chartHeight}
-              theme={VictoryTheme.material}
-            >
-              <VictoryAxis
-                style={{
-                  axis: { stroke: colors.cardBorder },
-                  tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                  grid: { stroke: `${colors.cardBorder}40` },
+            <View style={[styles.chartCanvas, { minHeight: chartHeight + 8 }]}>
+              <VictoryChart
+                width={chartWidth}
+                height={chartHeight}
+                theme={VictoryTheme.material}
+                domain={{
+                  x: [1, Math.max(1, productChartData.length)],
+                  y: [productDomainMinY, productDomainMaxY],
                 }}
-              />
-              <VictoryAxis
-                dependentAxis
-                style={{
-                  axis: { stroke: colors.cardBorder },
-                  tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                  grid: { stroke: `${colors.cardBorder}40` },
-                }}
-              />
-              <VictoryLine
-                data={productData}
-                style={{ data: { stroke: colors.primaryPurple, strokeWidth: 3 } }}
-              />
-            </VictoryChart>
+                domainPadding={{ x: isCompact ? 16 : 24, y: 16 }}
+                padding={{ top: 18, bottom: 46, left: 52, right: 20 }}
+              >
+                <VictoryAxis
+                  tickValues={xTickValues}
+                  tickFormat={(tick) => {
+                    const index = Number(tick) - 1;
+                    return productChartData[index]?.label ?? "";
+                  }}
+                  style={{
+                    axis: { stroke: colors.cardBorder },
+                    tickLabels: { fill: colors.textSecondary, fontSize: isCompact ? 9 : 10, padding: 8 },
+                    grid: { stroke: `${colors.cardBorder}40` },
+                  }}
+                />
+                <VictoryAxis
+                  dependentAxis
+                  tickFormat={(tick) => {
+                    const value = Number(tick);
+                    return value < 0 ? "" : `${Math.round(value)}`;
+                  }}
+                  style={{
+                    axis: { stroke: colors.cardBorder },
+                    tickLabels: { fill: colors.textSecondary, fontSize: isCompact ? 9 : 10, padding: 6 },
+                    grid: { stroke: `${colors.cardBorder}40` },
+                  }}
+                />
+                <VictoryLine
+                  data={productChartData}
+                  interpolation="linear"
+                  style={{ data: { stroke: colors.primaryPurple, strokeWidth: 3 } }}
+                />
+                <VictoryScatter
+                  data={productChartData}
+                  size={({ datum }: any) => {
+                    const isFocused =
+                      activeProductPoint &&
+                      activeProductPoint.x === String(datum?.label ?? datum?.x) &&
+                      activeProductPoint.y === Number(datum?.y ?? 0);
+                    if (isFocused) {
+                      return 7;
+                    }
+                    return Number(datum?.y ?? 0) > 0 ? 4 : 3;
+                  }}
+                  style={{
+                    data: {
+                      fill: ({ datum }: any) => {
+                        const isFocused =
+                          activeProductPoint &&
+                          activeProductPoint.x === String(datum?.label ?? datum?.x) &&
+                          activeProductPoint.y === Number(datum?.y ?? 0);
+                        if (isFocused) {
+                          return colors.neonGreen;
+                        }
+                        return Number(datum?.y ?? 0) > 0 ? colors.primaryPurple : `${colors.primaryPurple}65`;
+                      },
+                      stroke: colors.cardBgFrom,
+                      strokeWidth: 2,
+                    },
+                  }}
+                  events={[
+                    {
+                      target: "data",
+                      eventHandlers: {
+                        onMouseOver: (_event: any, props: any) => {
+                          const datum = props?.datum;
+                          if (datum) {
+                            setActiveProductPoint({
+                              x: String(datum.label ?? datum.x),
+                              y: Number(datum.y),
+                            });
+                          }
+                          return [];
+                        },
+                        onMouseOut: () => {
+                          setActiveProductPoint(null);
+                          return [];
+                        },
+                        onPressIn: (_event: any, props: any) => {
+                          const datum = props?.datum;
+                          if (datum) {
+                            setActiveProductPoint({
+                              x: String(datum.label ?? datum.x),
+                              y: Number(datum.y),
+                            });
+                          }
+                          return [];
+                        },
+                      },
+                    },
+                  ]}
+                />
+              </VictoryChart>
+            </View>
+            <View style={[styles.chartInfoBox, { borderColor: colors.cardBorder, backgroundColor: `${colors.inputBgTo}80` }]}>
+              <Text style={[styles.chartInfoText, { color: colors.textSecondary }]}>
+                {activeProductPoint
+                  ? `${activeProductPoint.x} - ${activeProductPoint.y} ${t('Products')}`
+                  : t('Hover or tap a point to inspect values')}
+              </Text>
+            </View>
           </Card.Content>
         </Card>
 
-        <Card mode="outlined" style={[styles.chartCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}> 
+        <Card
+          mode="outlined"
+          style={[
+            styles.chartCard,
+            styles.chartCardSized,
+            { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+          ]}
+        > 
           <Card.Content style={styles.chartCardContent}>
             <Text style={[styles.chartTitle, { color: colors.neonGreen }, isCompact && styles.chartTitleCompact]}>
               {t('Order Volume')}
             </Text>
-            <VictoryChart
-              width={chartWidth}
-              height={chartHeight}
-              theme={VictoryTheme.material}
-            >
-              <VictoryAxis
-                style={{
-                  axis: { stroke: colors.cardBorder },
-                  tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                  grid: { stroke: `${colors.cardBorder}40` },
+            <View style={[styles.chartCanvas, { minHeight: chartHeight + 8 }]}>
+              <VictoryChart
+                width={chartWidth}
+                height={chartHeight}
+                theme={VictoryTheme.material}
+                domain={{
+                  x: [1, Math.max(1, orderChartData.length)],
+                  y: [orderDomainMinY, orderDomainMaxY],
                 }}
-              />
-              <VictoryAxis
-                dependentAxis
-                style={{
-                  axis: { stroke: colors.cardBorder },
-                  tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                  grid: { stroke: `${colors.cardBorder}40` },
-                }}
-              />
-              <VictoryBar
-                data={orderData}
-                style={{ data: { fill: colors.neonGreen, width: isCompact ? 12 : 18 } }}
-                cornerRadius={4}
-              />
-            </VictoryChart>
-          </Card.Content>
-        </Card>
-
-        <Card mode="outlined" style={[styles.chartCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}> 
-          <Card.Content style={styles.chartCardContent}>
-            <Text style={[styles.chartTitle, { color: colors.neonGreen }, isCompact && styles.chartTitleCompact]}>
-              {t('Product Distribution')}
-            </Text>
-            <VictoryPie
-              data={categoryData}
-              width={chartWidth}
-              height={chartHeight}
-              radius={pieRadius}
-              colorScale={[
-                colors.primaryPurple,
-                colors.secondaryPurple,
-                colors.neonGreen,
-                colors.accentOrange,
-                "#ff4f7d",
-              ]}
-              padAngle={3}
-              innerRadius={pieInnerRadius}
-              labels={({ datum }) => `${datum.x}\n${datum.y}%`}
-              labelPlacement="parallel"
-              style={{
-                data: {
-                  stroke: colors.cardBorder,
-                  strokeWidth: 2,
-                },
-                labels: {
-                  fill: colors.textPrimary,
-                  fontSize: 11,
-                  fontWeight: "700",
-                  textAnchor: "middle",
-                },
-              }}
-              labelRadius={({ innerRadius, radius }) => {
-                const safeInner = typeof innerRadius === 'number' ? innerRadius : 70;
-                const safeRadius = typeof radius === 'number' ? radius : 115;
-                return safeInner + (safeRadius - safeInner) * 0.55;
-              }}
-              labelComponent={<VictoryLabel lineHeight={1.4} />}
-            />
+                domainPadding={{ x: isCompact ? 18 : 26, y: 16 }}
+                padding={{ top: 18, bottom: 46, left: 52, right: 20 }}
+              >
+                <VictoryAxis
+                  tickValues={xTickValues}
+                  tickFormat={(tick) => {
+                    const index = Number(tick) - 1;
+                    return orderChartData[index]?.label ?? "";
+                  }}
+                  style={{
+                    axis: { stroke: colors.cardBorder },
+                    tickLabels: { fill: colors.textSecondary, fontSize: isCompact ? 9 : 10, padding: 8 },
+                    grid: { stroke: `${colors.cardBorder}40` },
+                  }}
+                />
+                <VictoryAxis
+                  dependentAxis
+                  tickFormat={(tick) => {
+                    const value = Number(tick);
+                    return value < 0 ? "" : `${Math.round(value)}`;
+                  }}
+                  style={{
+                    axis: { stroke: colors.cardBorder },
+                    tickLabels: { fill: colors.textSecondary, fontSize: isCompact ? 9 : 10, padding: 6 },
+                    grid: { stroke: `${colors.cardBorder}40` },
+                  }}
+                />
+                <VictoryBar
+                  data={orderChartData}
+                  style={{
+                    data: {
+                      fill: ({ datum }: any) => {
+                        const isFocused =
+                          activeOrderPoint &&
+                          activeOrderPoint.x === String(datum?.label ?? datum?.x) &&
+                          activeOrderPoint.y === Number(datum?.y ?? 0);
+                        return isFocused ? colors.primaryPurple : colors.neonGreen;
+                      },
+                      width: ({ datum }: any) => {
+                        const isFocused =
+                          activeOrderPoint &&
+                          activeOrderPoint.x === String(datum?.label ?? datum?.x) &&
+                          activeOrderPoint.y === Number(datum?.y ?? 0);
+                        return isFocused ? orderBarWidth + 4 : orderBarWidth;
+                      },
+                    },
+                  }}
+                  cornerRadius={4}
+                  events={[
+                    {
+                      target: "data",
+                      eventHandlers: {
+                        onMouseOver: (_event: any, props: any) => {
+                          const datum = props?.datum;
+                          if (datum) {
+                            setActiveOrderPoint({
+                              x: String(datum.label ?? datum.x),
+                              y: Number(datum.y),
+                            });
+                          }
+                          return [];
+                        },
+                        onMouseOut: () => {
+                          setActiveOrderPoint(null);
+                          return [];
+                        },
+                        onPressIn: (_event: any, props: any) => {
+                          const datum = props?.datum;
+                          if (datum) {
+                            setActiveOrderPoint({
+                              x: String(datum.label ?? datum.x),
+                              y: Number(datum.y),
+                            });
+                          }
+                          return [];
+                        },
+                      },
+                    },
+                  ]}
+                />
+                <VictoryScatter
+                  data={orderChartData}
+                  size={({ datum }: any) => {
+                    const isFocused =
+                      activeOrderPoint &&
+                      activeOrderPoint.x === String(datum?.label ?? datum?.x) &&
+                      activeOrderPoint.y === Number(datum?.y ?? 0);
+                    if (isFocused) {
+                      return 6;
+                    }
+                    return Number(datum?.y ?? 0) > 0 ? 4 : 3;
+                  }}
+                  style={{
+                    data: {
+                      fill: ({ datum }: any) => {
+                        const isFocused =
+                          activeOrderPoint &&
+                          activeOrderPoint.x === String(datum?.label ?? datum?.x) &&
+                          activeOrderPoint.y === Number(datum?.y ?? 0);
+                        if (isFocused) {
+                          return colors.primaryPurple;
+                        }
+                        return Number(datum?.y ?? 0) > 0 ? colors.neonGreen : `${colors.neonGreen}55`;
+                      },
+                      stroke: colors.cardBgFrom,
+                      strokeWidth: 1.5,
+                    },
+                  }}
+                />
+              </VictoryChart>
+            </View>
+            <View style={[styles.chartInfoBox, { borderColor: colors.cardBorder, backgroundColor: `${colors.inputBgTo}80` }]}>
+              <Text style={[styles.chartInfoText, { color: colors.textSecondary }]}>
+                {activeOrderPoint
+                  ? `${activeOrderPoint.x} - ${activeOrderPoint.y} ${t('Orders')}`
+                  : t('Hover or tap a bar to inspect values')}
+              </Text>
+            </View>
           </Card.Content>
         </Card>
 
@@ -332,35 +517,44 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
-    height: 4,
-    width: 100,
-    borderRadius: 2,
+    height: 6,
+    width: 132,
+    borderRadius: 999,
   },
   banner: {
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -420,19 +614,43 @@ const styles = StyleSheet.create({
   chartCard: {
     borderRadius: 8,
     marginBottom: 16,
+    overflow: "hidden",
+  },
+  chartCardSized: {
+    width: "100%",
+    maxWidth: 1400,
+    alignSelf: "center",
   },
   chartCardContent: {
     padding: 16,
-    alignItems: "center",
+    alignItems: "stretch",
+  },
+  chartCanvas: {
+    width: "100%",
+    minHeight: 260,
+    alignItems: "stretch",
+    justifyContent: "center",
   },
   chartTitle: {
     fontSize: 18,
     marginBottom: 16,
     letterSpacing: 1,
+    textAlign: "center",
   },
   chartTitleCompact: {
     fontSize: 16,
     marginBottom: 12,
+  },
+  chartInfoBox: {
+    width: "100%",
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  chartInfoText: {
+    fontSize: 12,
   },
   activitiesCard: {
     borderRadius: 8,

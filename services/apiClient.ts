@@ -217,7 +217,7 @@ export class ApiClient {
 
   private headersToRecord(headers: Headers): Record<string, string> {
     const result: Record<string, string> = {};
-    headers.forEach((value, key) => {
+    headers.forEach((value: string, key: string) => {
       result[key] = value;
     });
     return result;

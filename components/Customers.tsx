@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Button, Card, Chip, Searchbar } from './ui/Paper';
@@ -28,6 +28,8 @@ import { CustomerFormModal } from './customers/CustomerFormModal';
 const filterOptions = ['all', 'active', 'inactive'] as const;
 
 export function Customers() {
+  const CUSTOMER_STATS_PAGE_SIZE = 100;
+  const CUSTOMER_STATS_MAX_PAGES = 50;
   const { colors } = useTheme();
   const { t } = useI18n();
   const { client, isAuthenticated, loading: authLoading, enterpriseId, currency, user } = useAuth();
@@ -66,6 +68,8 @@ export function Customers() {
   const [deactivatingId, setDeactivatingId] = useState<CustomerModel['id'] | null>(null);
   const [confirmCustomer, setConfirmCustomer] = useState<CustomerModel | null>(null);
   const [confirmName, setConfirmName] = useState('');
+  const [globalCustomerStats, setGlobalCustomerStats] = useState(() => getCustomerStats([]));
+  const [customerStatsRefreshKey, setCustomerStatsRefreshKey] = useState(0);
 
   const {
     formState,
@@ -95,6 +99,86 @@ export function Customers() {
       setPageNumber((prev) => prev + 1);
     }
   }, [hasMore, setPageNumber]);
+
+  useEffect(() => {
+    let active = true;
+
+    const run = async () => {
+      if (!active) {
+        return;
+      }
+
+      if (!isAuthenticated || authLoading) {
+        setGlobalCustomerStats(getCustomerStats([]));
+        return;
+      }
+
+      const originalSetter = setGlobalCustomerStats;
+      const guardedSetter = (value: ReturnType<typeof getCustomerStats>) => {
+        if (active) {
+          originalSetter(value);
+        }
+      };
+
+      let page = 1;
+      const allCustomers: CustomerModel[] = [];
+      const seenIds = new Set<string>();
+
+      while (active && page <= CUSTOMER_STATS_MAX_PAGES) {
+        const response = await erpService.fetchCustomers(page, CUSTOMER_STATS_PAGE_SIZE, true, {
+          enterpriseId: enterpriseId ?? undefined,
+        });
+
+        if (!response.ok) {
+          break;
+        }
+
+        const rows = response.data ?? [];
+        if (rows.length === 0) {
+          break;
+        }
+
+        let addedRows = 0;
+        rows.forEach((customer, index) => {
+          const rawId = customer.id;
+          const key =
+            rawId !== undefined && rawId !== null && String(rawId).trim() !== ''
+              ? String(rawId)
+              : `page:${page}:idx:${index}`;
+
+          if (seenIds.has(key)) {
+            return;
+          }
+
+          seenIds.add(key);
+          allCustomers.push(customer);
+          addedRows += 1;
+        });
+
+        if (addedRows === 0) {
+          break;
+        }
+
+        page += 1;
+      }
+
+      guardedSetter(getCustomerStats(allCustomers));
+    };
+
+    run();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    erpService,
+    isAuthenticated,
+    authLoading,
+    enterpriseId,
+    customerStatsRefreshKey,
+    CUSTOMER_STATS_MAX_PAGES,
+    CUSTOMER_STATS_PAGE_SIZE,
+  ]);
 
   const openCreate = useCallback(() => {
     if (!isAuthenticated || authLoading) {
@@ -177,6 +261,7 @@ export function Customers() {
           };
           const nextCustomer = response.data ?? fallbackCustomer;
           setCustomers((prev) => [nextCustomer, ...prev]);
+          setCustomerStatsRefreshKey((prev) => prev + 1);
           closeForm();
           return;
         }
@@ -208,6 +293,7 @@ export function Customers() {
         setCustomers((prev) =>
           prev.map((item) => (item.id === formState.customer?.id ? { ...item, ...nextCustomer } : item)),
         );
+        setCustomerStatsRefreshKey((prev) => prev + 1);
         closeForm();
         return;
       }
@@ -289,6 +375,7 @@ export function Customers() {
               : item,
           ),
         );
+        setCustomerStatsRefreshKey((prev) => prev + 1);
         closeConfirm();
       } else {
         setErrorMessage(response.error ?? t('Unable to deactivate customer'));
@@ -315,13 +402,14 @@ export function Customers() {
     [filteredCustomers, orderSummary],
   );
 
-  const customerStats = useMemo(() => getCustomerStats(customers), [customers]);
+  const customerStats = globalCustomerStats;
 
   const displayErrorMessage = errorMessage ?? orderSummaryError;
 
   if (loading) {
     return (
       <NervLoader
+        variant="customers"
         fullScreen
         label={t('Synchronizing EVA-01')}
         subtitle={t('LCL circulation nominal | Loading customers...')}
@@ -331,7 +419,7 @@ export function Customers() {
 
   return (
     <>
-      <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
+      <ScrollView style={styles.container}>
         <View style={[styles.content, { padding: contentPadding }]}>
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
@@ -592,35 +680,44 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
-    height: 4,
-    width: 100,
-    borderRadius: 2,
+    height: 6,
+    width: 132,
+    borderRadius: 999,
   },
   banner: {
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -629,11 +726,11 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   emptyTitle: {
     fontSize: 14,
@@ -718,8 +815,8 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   paginationButton: {
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: 12,
+    borderWidth: 1.5,
   },
   paginationButtonDisabled: {
     opacity: 0.5,
@@ -733,16 +830,16 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
-    borderRadius: 12,
-    minHeight: 48,
+    borderRadius: 16,
+    minHeight: 50,
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
   },
   addButton: {
-    borderRadius: 8,
-    minHeight: 48,
+    borderRadius: 14,
+    minHeight: 50,
   },
   addButtonContent: {
     paddingHorizontal: 18,

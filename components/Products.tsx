@@ -16,7 +16,6 @@ import {
 } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { useI18n } from '../contexts/I18nContext';
 import { formatCurrency } from '../utils/currency';
 import { ErpService, Product as ProductModel } from '../services/erpService';
 import { NervLoader } from './NervLoader';
@@ -41,7 +40,6 @@ type ProductViewMode = 'detailed' | 'compact';
 
 export function Products() {
   const { colors } = useTheme();
-  const { t } = useI18n();
   const { client, isAuthenticated, loading: authLoading, enterpriseId, currency } = useAuth();
   const erpService = useMemo(() => new ErpService(client), [client]);
   const { isCompact, isTablet, contentPadding } = useResponsive();
@@ -80,7 +78,7 @@ export function Products() {
   const [createQuantity, setCreateQuantity] = useState('');
   const [createDefaultValue, setCreateDefaultValue] = useState('');
   const [createUnit, setCreateUnit] = useState('');
-  const [createIsExternal, setCreateIsExternal] = useState(true);
+  const [createIsExternal, setCreateIsExternal] = useState(false);
   const [createIsService, setCreateIsService] = useState(false);
   const [createUnitOpen, setCreateUnitOpen] = useState(false);
   const [createFile, setCreateFile] = useState('');
@@ -106,6 +104,7 @@ export function Products() {
         pageSize,
         true,
         trimmedSearch ? { name: trimmedSearch } : { isActive: true, name: '' },
+        true,
       );
       if (!active) {
         return;
@@ -115,7 +114,7 @@ export function Products() {
         setProducts(response.data);
         setHasMore(response.data.length === pageSize);
       } else {
-        setErrorMessage(response.error ?? t('Unable to load products'));
+        setErrorMessage(response.error ?? 'Unable to load products');
       }
 
       setLoading(false);
@@ -187,7 +186,7 @@ export function Products() {
     setCreateQuantity('');
     setCreateDefaultValue('');
     setCreateUnit('');
-    setCreateIsExternal(true);
+    setCreateIsExternal(false);
     setCreateIsService(false);
     setCreateUnitOpen(false);
     setCreateFile('');
@@ -206,7 +205,7 @@ export function Products() {
     setCreateQuantity('');
     setCreateDefaultValue('');
     setCreateUnit('');
-    setCreateIsExternal(true);
+    setCreateIsExternal(false);
     setCreateIsService(false);
     setCreateUnitOpen(false);
     setCreateFile('');
@@ -244,26 +243,26 @@ export function Products() {
 
     const name = editName.trim();
     if (!name) {
-      setErrorMessage(t('Product name is required.'));
+      setErrorMessage('Product name is required.');
       return;
     }
     if (editQuantityError) {
-      setErrorMessage(t('Storage quantity: {message}.', { message: t(editQuantityError) }));
+      setErrorMessage(`Storage quantity: ${editQuantityError}.`);
       return;
     }
     if (editDefaultValueError) {
-      setErrorMessage(t('Default value: {message}.', { message: t(editDefaultValueError) }));
+      setErrorMessage(`Default value: ${editDefaultValueError}.`);
       return;
     }
 
     const resolvedEnterpriseId = editingProduct.enterpriseId ?? enterpriseId;
     if (!resolvedEnterpriseId) {
-      setErrorMessage(t('Product must have an enterprise.'));
+      setErrorMessage('Product must have an enterprise.');
       return;
     }
 
-    const quantity = parseNumber(editQuantity);
-    const defaultValue = parseNumber(editDefaultValue);
+    const quantity = parseNumber(editQuantity) ?? 0;
+    const defaultValue = parseNumber(editDefaultValue) ?? 0;
 
     setSaving(true);
     setErrorMessage(null);
@@ -272,10 +271,10 @@ export function Products() {
       ...editingProduct,
       name,
       pictureAddress: editPicture.trim(),
-      storageQuantity: quantity ?? undefined,
-      stock: quantity ?? undefined,
-      defaultValue: defaultValue ?? undefined,
-      price: defaultValue ?? undefined,
+      storageQuantity: quantity,
+      stock: quantity,
+      defaultValue,
+      price: defaultValue,
       unitOfMeasure: editUnit.trim().toUpperCase(),
       isExternal: editIsExternal,
       isService: editIsService,
@@ -290,41 +289,41 @@ export function Products() {
       );
       closeEdit();
     } else {
-      setErrorMessage(response.error ?? t('Unable to update product'));
+      setErrorMessage(response.error ?? 'Unable to update product');
     }
 
     setSaving(false);
   };
 
   const handleCreate = async () => {
-      setShowCreateErrors(true);
+    setShowCreateErrors(true);
     if (!enterpriseId) {
-      setErrorMessage(t('Product must have an enterprise.'));
+      setErrorMessage('Product must have an enterprise.');
       return;
     }
 
     const name = createName.trim();
     if (!name) {
-      setErrorMessage(t('Product name is required.'));
+      setErrorMessage('Product name is required.');
       return;
     }
     if (createQuantityError) {
-      setErrorMessage(t('Storage quantity: {message}.', { message: t(createQuantityError) }));
+      setErrorMessage(`Storage quantity: ${createQuantityError}.`);
       return;
     }
     if (createDefaultValueError) {
-      setErrorMessage(t('Default value: {message}.', { message: t(createDefaultValueError) }));
+      setErrorMessage(`Default value: ${createDefaultValueError}.`);
       return;
     }
 
     const filePayload = createFile || createPictureFile;
     if (!filePayload) {
-      setErrorMessage(t('Product image is required.'));
+      setErrorMessage('Product image is required.');
       return;
     }
 
-    const quantity = parseNumber(createQuantity);
-    const defaultValue = parseNumber(createDefaultValue);
+    const quantity = parseNumber(createQuantity) ?? 0;
+    const defaultValue = parseNumber(createDefaultValue) ?? 0;
 
     setCreating(true);
     setErrorMessage(null);
@@ -355,16 +354,16 @@ export function Products() {
       }
       closeCreate();
     } else {
-      setErrorMessage(response.error ?? t('Unable to create product'));
+      setErrorMessage(response.error ?? 'Unable to create product');
     }
 
     setCreating(false);
   };
 
   const pickImage = async () => {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      setErrorMessage(t('Gallery permission is required to select a picture.'));
+      setErrorMessage('Gallery permission is required to select a picture.');
       return;
     }
 
@@ -424,17 +423,17 @@ export function Products() {
 
   const handleDeactivate = (product: ProductModel) => {
     Alert.alert(
-      t('Deactivate product'),
-      t('Deactivate {name}?', { name: product.name ?? t('this product') }),
+      'Deactivate product',
+      `Deactivate ${product.name}?`,
       [
-        { text: t('Cancel'), style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: t('Deactivate'),
+          text: 'Deactivate',
           style: 'destructive',
           onPress: async () => {
             const resolvedEnterpriseId = product.enterpriseId ?? enterpriseId;
             if (!resolvedEnterpriseId) {
-              setErrorMessage(t('Product must have an enterprise.'));
+              setErrorMessage('Product must have an enterprise.');
               return;
             }
 
@@ -449,7 +448,7 @@ export function Products() {
                 ),
               );
             } else {
-              setErrorMessage(response.error ?? t('Unable to deactivate product'));
+              setErrorMessage(response.error ?? 'Unable to deactivate product');
             }
 
             setDeactivatingId(null);
@@ -463,23 +462,24 @@ export function Products() {
   if (loading) {
     return (
       <NervLoader
+        variant="products"
         fullScreen
-        label={t('Synchronizing EVA-01')}
-        subtitle={t('LCL circulation nominal | Loading products...')}
+        label="Synchronizing EVA-01"
+        subtitle="LCL circulation nominal | Loading products..."
       />
     );
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
+    <ScrollView style={styles.container}>
       <View style={[styles.content, { padding: contentPadding }]}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-            {t('PRODUCT INVENTORY')}
+            PRODUCT INVENTORY
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-            {t('Manage and track product catalog')}
+            Manage and track product catalog
           </Text>
           <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
         </View>
@@ -487,7 +487,7 @@ export function Products() {
         {!isAuthenticated && !authLoading && (
           <View style={[styles.banner, { backgroundColor: `${colors.primaryPurple}15`, borderColor: colors.primaryPurple }]}>
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>
-              {t('Authenticate to load live products.')}
+              Authenticate to load live products.
             </Text>
           </View>
         )}
@@ -501,9 +501,9 @@ export function Products() {
         {!loading && filteredProducts.length === 0 && (
           <View style={[styles.emptyState, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
             <Feather name="package" size={20} color={colors.textMuted} />
-            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>{t('No products yet')}</Text>
+            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No products yet</Text>
             <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-              {t('Add products or adjust filters to see items here.')}
+              Add products or adjust filters to see items here.
             </Text>
           </View>
         )}
@@ -530,7 +530,7 @@ export function Products() {
             ]}
             contentStyle={styles.filterButtonContent}
           >
-            {unitFilter.length === 0 ? t('Unit types') : unitFilter.join(', ')}
+            {unitFilter.length === 0 ? 'Unit types' : unitFilter.join(', ')}
           </Button>
         </View>
         {unitFilterOpen && (
@@ -542,21 +542,15 @@ export function Products() {
                   <Chip
                     key={unit}
                     selected={selected}
-                    showSelectedCheck={false}
-                    icon={
-                      selected
-                        ? ({ size }) => <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                        : undefined
-                    }
                     onPress={() => toggleUnitFilter(unit)}
                     style={[
                       styles.unitChip,
                       {
-                        borderColor: selected ? colors.primaryPurple : colors.cardBorder,
-                        backgroundColor: selected ? colors.primaryPurple : colors.cardBgFrom,
+                        borderColor: selected ? colors.neonGreen : colors.cardBorder,
+                        backgroundColor: selected ? `${colors.neonGreen}12` : colors.cardBgFrom,
                       },
                     ]}
-                    textStyle={[styles.unitOptionText, { color: selected ? colors.neonGreen : colors.textSecondary }]}
+                    textStyle={[styles.unitOptionText, { color: colors.textPrimary }]}
                   >
                     {unit}
                   </Chip>
@@ -567,43 +561,32 @@ export function Products() {
         )}
 
         <View style={styles.filterContainer}>
-          {statusFilters.map((status) => {
-            const isSelected = filterStatus === status;
-            return (
-              <Chip
-                key={status}
-                selected={isSelected}
-                showSelectedCheck={false}
-                icon={
-                  isSelected
-                    ? ({ size }) => (
-                        <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                      )
-                    : undefined
-                }
-                onPress={() => setFilterStatus(status)}
-                style={[
-                  styles.filterButton,
-                  {
-                    backgroundColor: isSelected ? colors.primaryPurple : colors.cardBgFrom,
-                    borderColor: isSelected ? colors.primaryPurple : colors.cardBorder,
-                  },
-                ]}
-                textStyle={[
-                  styles.filterText,
-                  { color: isSelected ? colors.neonGreen : colors.textSecondary },
-                ]}
-              >
-                {status === 'all' ? t('All') : status === 'active' ? t('Active') : t('Deactivated')}
-              </Chip>
-            );
-          })}
+          {statusFilters.map((status) => (
+            <Chip
+              key={status}
+              selected={filterStatus === status}
+              onPress={() => setFilterStatus(status)}
+              style={[
+                styles.filterButton,
+                {
+                  backgroundColor: colors.cardBgFrom,
+                  borderColor: filterStatus === status ? colors.neonGreen : colors.cardBorder,
+                },
+              ]}
+              textStyle={[
+                styles.filterText,
+                { color: filterStatus === status ? colors.neonGreen : colors.textSecondary },
+              ]}
+            >
+              {status === 'all' ? 'All' : status === 'active' ? 'Active' : 'Deactivated'}
+            </Chip>
+          ))}
         </View>
 
         {/* Search and Add */}
         <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
           <Searchbar
-            placeholder={t('Search products...')}
+            placeholder="Search products..."
             value={searchTerm}
             onChangeText={setSearchTerm}
             style={[styles.searchBar, { backgroundColor: colors.inputBgFrom }]}
@@ -621,12 +604,12 @@ export function Products() {
             contentStyle={[styles.addButtonContent, isCompact && styles.addButtonContentCompact]}
             labelStyle={styles.addButtonLabel}
           >
-            {t('Add')}
+            Add
           </Button>
         </View>
 
         <View style={[styles.viewRow, isCompact && styles.viewRowCompact]}>
-          <Text style={[styles.viewLabel, { color: colors.textSecondary }]}>{t('View')}</Text>
+          <Text style={[styles.viewLabel, { color: colors.textSecondary }]}>View</Text>
           <View
             style={[
               styles.viewToggle,
@@ -634,9 +617,9 @@ export function Products() {
               { borderColor: colors.cardBorder, backgroundColor: colors.sidebarBgTo },
             ]}
           >
-              {([
-              { value: 'detailed', label: t('Detailed') },
-              { value: 'compact', label: t('Compact') },
+            {([
+              { value: 'detailed', label: 'Detailed' },
+              { value: 'compact', label: 'Compact' },
             ] as const).map((option, index, array) => {
               const isActive = viewMode === option.value;
               return (
@@ -680,9 +663,9 @@ export function Products() {
             ]}
             contentStyle={styles.paginationButtonContent}
           >
-            {t('Prev')}
+            Prev
           </Button>
-          <Text style={[styles.pageIndicator, { color: colors.textPrimary }]}>{t('Page {page}', { page: pageNumber })}</Text>
+          <Text style={[styles.pageIndicator, { color: colors.textPrimary }]}>Page {pageNumber}</Text>
           <Button
             mode="outlined"
             onPress={goNextPage}
@@ -696,7 +679,7 @@ export function Products() {
             ]}
             contentStyle={styles.paginationButtonContent}
           >
-            {t('Next')}
+            Next
           </Button>
         </View>
 
@@ -722,7 +705,7 @@ export function Products() {
                             {product.name}
                           </Text>
                           <Text style={[styles.compactMeta, { color: colors.textSecondary }]} numberOfLines={1}>
-                            {(product.category ?? t('Uncategorized'))} | {unitLabel}
+                            {(product.category ?? 'Uncategorized')} | {unitLabel}
                           </Text>
                         </View>
                         <View
@@ -733,7 +716,7 @@ export function Products() {
                           ]}
                         >
                           <Text style={[styles.statusText, isCompact && styles.statusTextCompact, { color: statusColor }]}>
-                            {t(status)}
+                            {status}
                           </Text>
                         </View>
                       </View>
@@ -749,7 +732,7 @@ export function Products() {
                           <View style={styles.detailRow}>
                             <Feather name="package" size={14} color={colors.primaryPurple} />
                             <Text style={[styles.detailText, { color: colors.textSecondary }]}>
-                              {t('Stock')}: {quantity}
+                              Stock: {quantity}
                             </Text>
                           </View>
                         </View>
@@ -808,7 +791,7 @@ export function Products() {
                         ) : (
                           <View style={[styles.productMediaFallback, { borderColor: colors.cardBorder }]}>
                             <Feather name="image" size={20} color={colors.textMuted} />
-                            <Text style={[styles.productMediaText, { color: colors.textMuted }]}>{t('No image')}</Text>
+                            <Text style={[styles.productMediaText, { color: colors.textMuted }]}>No image</Text>
                           </View>
                         )}
                       </View>
@@ -838,13 +821,13 @@ export function Products() {
                         <View style={styles.detailRow}>
                           <Feather name="package" size={16} color={colors.primaryPurple} />
                           <Text style={[styles.detailText, { color: colors.textSecondary }]}>
-                            {t('Stock')}: {quantity}
+                            Stock: {quantity}
                           </Text>
                         </View>
                         <View style={styles.detailRow}>
                           <Feather name="hash" size={16} color={colors.primaryPurple} />
                           <Text style={[styles.detailText, { color: colors.textSecondary }]}>
-                            {t('Unit')}: {product.unitOfMeasure ? product.unitOfMeasure.toUpperCase() : '-'}
+                            Unit: {product.unitOfMeasure ? product.unitOfMeasure.toUpperCase() : '-'}
                           </Text>
                         </View>
                       </View>
@@ -857,7 +840,7 @@ export function Products() {
                         ]}
                       >
                         <Text style={[styles.statusText, isCompact && styles.statusTextCompact, { color: statusColor }]}>
-                          {t(status)}
+                          {status}
                         </Text>
                       </View>
 
@@ -866,13 +849,13 @@ export function Products() {
                           <TouchableRipple style={styles.menuItem} onPress={() => openDetails(product)}>
                             <View style={styles.menuItemContent}>
                               <Feather name="info" size={14} color={colors.textSecondary} />
-                              <Text style={[styles.menuLabel, { color: colors.textSecondary }]}>{t('Details')}</Text>
+                              <Text style={[styles.menuLabel, { color: colors.textSecondary }]}>Details</Text>
                             </View>
                           </TouchableRipple>
                           <TouchableRipple style={styles.menuItem} onPress={() => openEdit(product)}>
                             <View style={styles.menuItemContent}>
                               <Feather name="edit-3" size={14} color={colors.primaryPurple} />
-                              <Text style={[styles.menuLabel, { color: colors.primaryPurple }]}>{t('Edit')}</Text>
+                              <Text style={[styles.menuLabel, { color: colors.primaryPurple }]}>Edit</Text>
                             </View>
                           </TouchableRipple>
                           <TouchableRipple
@@ -886,7 +869,7 @@ export function Products() {
                             <View style={styles.menuItemContent}>
                               <Feather name="trash-2" size={14} color="#f72585" />
                               <Text style={[styles.menuLabel, { color: '#f72585' }]}>
-                                {deactivatingId === product.id ? t('Deactivating...') : t('Deactivate')}
+                                {deactivatingId === product.id ? 'Deactivating...' : 'Deactivate'}
                               </Text>
                             </View>
                           </TouchableRipple>
@@ -910,7 +893,7 @@ export function Products() {
             ]}
           >
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{t('Edit Product')}</Text>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Edit Product</Text>
               <IconButton
                 icon={() => <Feather name="x" size={18} color={colors.textSecondary} />}
                 size={18}
@@ -920,7 +903,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Name')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Name</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -931,13 +914,13 @@ export function Products() {
                 activeOutlineColor={colors.primaryPurple}
                 value={editName}
                 onChangeText={setEditName}
-                placeholder={t('Product name')}
+                placeholder="Product name"
                 placeholderTextColor={colors.textMuted}
               />
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Picture URL')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Picture URL</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -955,7 +938,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Storage Quantity')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Storage Quantity</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -978,7 +961,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Default Value')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Default Value</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -1001,7 +984,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Unit of Measure')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Unit of Measure</Text>
               <Button
                 mode="outlined"
                 onPress={() => setEditUnitOpen((current) => !current)}
@@ -1012,7 +995,7 @@ export function Products() {
                 style={[styles.modalInput, styles.dropdownButton, { borderColor: colors.cardBorder }]}
                 contentStyle={styles.dropdownButtonContent}
               >
-                {editUnit || t('Select unit')}
+                {editUnit || 'Select unit'}
               </Button>
               {editUnitOpen && (
                 <View style={[styles.dropdownList, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
@@ -1056,7 +1039,7 @@ export function Products() {
                 ]}
                 textStyle={[styles.toggleLabel, { color: colors.textSecondary }]}
               >
-                {t('External')}: {editIsExternal ? t('Yes') : t('No')}
+                External: {editIsExternal ? 'Yes' : 'No'}
               </Chip>
               <Chip
                 selected={editIsService}
@@ -1069,7 +1052,7 @@ export function Products() {
                 ]}
                 textStyle={[styles.toggleLabel, { color: colors.textSecondary }]}
               >
-                {t('Service')}: {editIsService ? t('Yes') : t('No')}
+                Service: {editIsService ? 'Yes' : 'No'}
               </Chip>
             </View>
 
@@ -1083,7 +1066,7 @@ export function Products() {
                 contentStyle={styles.modalButtonContent}
                 labelStyle={styles.modalButtonLabel}
               >
-                {t('Cancel')}
+                Cancel
               </Button>
               <Button
                 mode="contained"
@@ -1095,7 +1078,7 @@ export function Products() {
                 contentStyle={styles.modalButtonContent}
                 labelStyle={styles.modalButtonLabel}
               >
-                {saving ? t('Saving...') : t('Save')}
+                {saving ? 'Saving...' : 'Save'}
               </Button>
             </View>
           </View>
@@ -1112,7 +1095,7 @@ export function Products() {
             ]}
           >
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{t('New Product')}</Text>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>New Product</Text>
               <IconButton
                 icon={() => <Feather name="x" size={18} color={colors.textSecondary} />}
                 size={18}
@@ -1122,7 +1105,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Name')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Name</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -1133,13 +1116,13 @@ export function Products() {
                 activeOutlineColor={colors.primaryPurple}
                 value={createName}
                 onChangeText={setCreateName}
-                placeholder={t('Product name')}
+                placeholder="Product name"
                 placeholderTextColor={colors.textMuted}
               />
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Description')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Description</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -1150,13 +1133,13 @@ export function Products() {
                 activeOutlineColor={colors.primaryPurple}
                 value={createDescription}
                 onChangeText={setCreateDescription}
-                placeholder={t('Description')}
+                placeholder="Description"
                 placeholderTextColor={colors.textMuted}
               />
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Picture')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Picture</Text>
               <View style={styles.fileRow}>
                 <Button
                   mode="outlined"
@@ -1166,10 +1149,10 @@ export function Products() {
                   style={[styles.fileButton, { borderColor: colors.cardBorder }]}
                   contentStyle={styles.fileButtonContent}
                 >
-                  {t('Select picture')}
+                  Select picture
                 </Button>
                 <Text style={[styles.fileName, { color: createPicture ? colors.textPrimary : colors.textMuted }]}>
-                  {createPicture || t('No picture selected')}
+                  {createPicture || 'No picture selected'}
                 </Text>
                 {createPictureFile ? (
                   <Image
@@ -1181,7 +1164,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Storage Quantity')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Storage Quantity</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -1204,7 +1187,7 @@ export function Products() {
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Default Value')}</Text>
+              <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Default Value</Text>
               <PaperTextInput
                 mode="outlined"
                 style={[styles.modalInput, { backgroundColor: colors.inputBgFrom }]}
@@ -1227,7 +1210,7 @@ export function Products() {
             </View>
 
               <View style={styles.modalField}>
-                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Unit of Measure')}</Text>
+                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Unit of Measure</Text>
                 <Button
                   mode="outlined"
                   onPress={() => setCreateUnitOpen((current) => !current)}
@@ -1238,7 +1221,7 @@ export function Products() {
                   style={[styles.modalInput, styles.dropdownButton, { borderColor: colors.cardBorder }]}
                   contentStyle={styles.dropdownButtonContent}
                 >
-                  {createUnit || t('Select unit')}
+                  {createUnit || 'Select unit'}
                 </Button>
                 {createUnitOpen && (
                   <View style={[styles.dropdownList, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
@@ -1271,7 +1254,7 @@ export function Products() {
               </View>
 
               <View style={styles.modalField}>
-                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('File')}</Text>
+                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>File</Text>
                 <View style={styles.fileRow}>
                   <Button
                     mode="outlined"
@@ -1281,10 +1264,10 @@ export function Products() {
                     style={[styles.fileButton, { borderColor: colors.cardBorder }]}
                     contentStyle={styles.fileButtonContent}
                   >
-                    {t('Select file')}
+                    Select file
                   </Button>
                   <Text style={[styles.fileName, { color: createFileName ? colors.textPrimary : colors.textMuted }]}>
-                    {createFileName || t('No file selected')}
+                    {createFileName || 'No file selected'}
                   </Text>
                 </View>
               </View>
@@ -1301,7 +1284,7 @@ export function Products() {
                   ]}
                   textStyle={[styles.toggleLabel, { color: colors.textSecondary }]}
                 >
-                  {t('External')}: {createIsExternal ? t('Yes') : t('No')}
+                  External: {createIsExternal ? 'Yes' : 'No'}
                 </Chip>
                 <Chip
                   selected={createIsService}
@@ -1314,7 +1297,7 @@ export function Products() {
                   ]}
                   textStyle={[styles.toggleLabel, { color: colors.textSecondary }]}
                 >
-                  {t('Service')}: {createIsService ? t('Yes') : t('No')}
+                  Service: {createIsService ? 'Yes' : 'No'}
                 </Chip>
               </View>
 
@@ -1328,7 +1311,7 @@ export function Products() {
                   contentStyle={styles.modalButtonContent}
                   labelStyle={styles.modalButtonLabel}
                 >
-                  {t('Cancel')}
+                  Cancel
                 </Button>
                 <Button
                   mode="contained"
@@ -1340,7 +1323,7 @@ export function Products() {
                   contentStyle={styles.modalButtonContent}
                   labelStyle={styles.modalButtonLabel}
                 >
-                  {creating ? t('Creating...') : t('Create')}
+                  {creating ? 'Creating...' : 'Create'}
                 </Button>
               </View>
           </View>
@@ -1357,7 +1340,7 @@ export function Products() {
             ]}
           >
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{t('Product Details')}</Text>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Product Details</Text>
               <IconButton
                 icon={() => <Feather name="x" size={18} color={colors.textSecondary} />}
                 size={18}
@@ -1386,7 +1369,7 @@ export function Products() {
                       <View style={[styles.detailsPlaceholder, { borderColor: colors.cardBorder }]}>
                         <Feather name="image" size={20} color={colors.textMuted} />
                         <Text style={[styles.detailsPlaceholderText, { color: colors.textMuted }]}>
-                          {t('No preview')}
+                          No preview
                         </Text>
                       </View>
                     );
@@ -1405,33 +1388,33 @@ export function Products() {
 
                 <View style={styles.detailsGrid}>
                   <View style={[styles.detailsRow, isCompact && styles.detailsRowCompact]}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Quantity')}</Text>
+                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>Quantity</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
                       {getStorageQuantity(detailsProduct)}
                     </Text>
                   </View>
                   <View style={[styles.detailsRow, isCompact && styles.detailsRowCompact]}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Default value')}</Text>
+                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>Default value</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
                       {formatCurrency((detailsProduct.defaultValue ?? detailsProduct.price) ?? 0, currency)}
                     </Text>
                   </View>
                   <View style={[styles.detailsRow, isCompact && styles.detailsRowCompact]}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Unit')}</Text>
+                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>Unit</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
                       {detailsProduct.unitOfMeasure ? detailsProduct.unitOfMeasure.toUpperCase() : '-'}
                     </Text>
                   </View>
                   <View style={[styles.detailsRow, isCompact && styles.detailsRowCompact]}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('External')}</Text>
+                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>External</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsProduct.isExternal ? t('Yes') : t('No')}
+                      {detailsProduct.isExternal ? 'Yes' : 'No'}
                     </Text>
                   </View>
                   <View style={[styles.detailsRow, isCompact && styles.detailsRowCompact]}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Service')}</Text>
+                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>Service</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsProduct.isService ? t('Yes') : t('No')}
+                      {detailsProduct.isService ? 'Yes' : 'No'}
                     </Text>
                   </View>
                 </View>
@@ -1442,14 +1425,14 @@ export function Products() {
                   const fileName = fileSource ? fileSource.split('/').pop() ?? 'file' : null;
                   return (
                     <View style={styles.detailsFileSection}>
-                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('File')}</Text>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>File</Text>
                       {fileSource ? (
                         <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                          {fileName ?? t('Attached')}
+                          {fileName ?? 'Attached'}
                         </Text>
                       ) : (
                         <Text style={[styles.detailsValue, { color: colors.textSecondary }]}>
-                          {t('No file available')}
+                          No file available
                         </Text>
                       )}
                       {canDownload && (
@@ -1462,7 +1445,7 @@ export function Products() {
                           style={styles.downloadButton}
                           contentStyle={styles.downloadButtonContent}
                         >
-                          {t('Download file')}
+                          Download file
                         </Button>
                       )}
                     </View>
@@ -1488,35 +1471,44 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
-    height: 4,
-    width: 100,
-    borderRadius: 2,
+    height: 6,
+    width: 132,
+    borderRadius: 999,
   },
   banner: {
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -1525,11 +1517,11 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   emptyTitle: {
     fontSize: 14,
@@ -1635,8 +1627,8 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   paginationButton: {
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: 12,
+    borderWidth: 1.5,
   },
   paginationButtonContent: {
     paddingVertical: 4,
@@ -1650,16 +1642,16 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
-    borderRadius: 12,
-    minHeight: 48,
+    borderRadius: 16,
+    minHeight: 50,
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
   },
   addButton: {
-    borderRadius: 8,
-    minHeight: 48,
+    borderRadius: 14,
+    minHeight: 50,
   },
   addButtonContent: {
     paddingHorizontal: 18,
@@ -1961,7 +1953,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   unitChip: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderRadius: 999,
     minHeight: 38,
     justifyContent: 'center',

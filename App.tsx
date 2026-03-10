@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { Provider as PaperProvider } from 'react-native-paper';
+import { MD3DarkTheme, MD3LightTheme, Provider as PaperProvider } from 'react-native-paper';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { I18nProvider, useI18n } from './contexts/I18nContext';
@@ -115,10 +115,18 @@ function LoadingScreen() {
 
 function AppContent() {
   const [activeModule, setActiveModule] = useState('dashboard');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { isAuthenticated, loading } = useAuth();
-  const { isWide, isTablet, isCompact } = useResponsive();
+  const { width, isTablet, isCompact } = useResponsive();
   const { colors } = useTheme();
-  const layoutDirection = isWide ? 'row' : 'column';
+  const useSideLayout = width >= 1024;
+  const layoutDirection = useSideLayout ? 'row' : 'column';
+
+  useEffect(() => {
+    if (isCompact && sidebarCollapsed) {
+      setSidebarCollapsed(false);
+    }
+  }, [isCompact, sidebarCollapsed]);
 
   const renderModule = () => {
     switch (activeModule) {
@@ -149,7 +157,7 @@ function AppContent() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.appBg }]} edges={['top', 'bottom']}>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.appBg }]}>
         {loading ? (
           <LoadingScreen />
         ) : !isAuthenticated ? (
@@ -159,21 +167,24 @@ function AppContent() {
             style={[
               styles.responsiveLayout,
               { flexDirection: layoutDirection },
-              !isWide && styles.stackedLayout,
-              !isWide && isCompact && styles.stackedLayoutCompact,
+              !useSideLayout && styles.stackedLayout,
+              !useSideLayout && isCompact && styles.stackedLayoutCompact,
             ]}
           >
             <Sidebar
               activeModule={activeModule}
               setActiveModule={setActiveModule}
-              layout={isWide ? 'side' : 'stacked'}
+              layout={useSideLayout ? 'side' : 'stacked'}
+              collapsed={sidebarCollapsed}
+              onToggleCollapsed={() => setSidebarCollapsed((prev) => !prev)}
             />
             <View
               style={[
                 styles.mainContent,
-                !isWide && styles.mainContentStacked,
-                isTablet && !isWide && styles.mainContentTablet,
-                isCompact && !isWide && styles.mainContentCompact,
+                { borderColor: `${colors.cardBorder}aa`, backgroundColor: colors.cardBgFrom },
+                !useSideLayout && styles.mainContentStacked,
+                isTablet && !useSideLayout && styles.mainContentTablet,
+                isCompact && !useSideLayout && styles.mainContentCompact,
               ]}
             >
               {renderModule()}
@@ -185,15 +196,43 @@ function AppContent() {
   );
 }
 
+function ThemedPaperProvider({ children }: { children: React.ReactNode }) {
+  const { colors, theme } = useTheme();
+
+  const paperTheme = React.useMemo(() => {
+    const baseTheme = theme === 'light' ? MD3LightTheme : MD3DarkTheme;
+
+    return {
+      ...baseTheme,
+      roundness: 16,
+      colors: {
+        ...baseTheme.colors,
+        primary: colors.primaryPurple,
+        secondary: colors.secondaryPurple,
+        tertiary: colors.neonGreen,
+        error: colors.accentOrange,
+        background: 'transparent',
+        surface: colors.cardBgFrom,
+        surfaceVariant: colors.cardBgTo,
+        outline: colors.cardBorder,
+        onSurface: colors.textPrimary,
+        onSurfaceVariant: colors.textSecondary,
+      },
+    };
+  }, [colors, theme]);
+
+  return <PaperProvider theme={paperTheme}>{children}</PaperProvider>;
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
         <I18nProvider>
           <ThemeProvider>
-            <PaperProvider>
+            <ThemedPaperProvider>
               <AppContent />
-            </PaperProvider>
+            </ThemedPaperProvider>
           </ThemeProvider>
         </I18nProvider>
       </AuthProvider>
@@ -207,6 +246,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+    overflow: 'hidden',
   },
   loadingContainer: {
     flex: 1,
@@ -257,15 +297,19 @@ const styles = StyleSheet.create({
   mainContent: {
     flex: 1,
     minHeight: 0,
+    borderWidth: 1,
+    borderRadius: 22,
+    overflow: 'hidden',
   },
   mainContentStacked: {
     width: '100%',
-    paddingHorizontal: 12,
-  },
-  mainContentTablet: {
     paddingHorizontal: 8,
   },
+  mainContentTablet: {
+    paddingHorizontal: 4,
+  },
   mainContentCompact: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 2,
+    borderRadius: 18,
   },
 });

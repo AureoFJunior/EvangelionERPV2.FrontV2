@@ -97,14 +97,41 @@ export const getNumberError = (
 };
 
 export const resolvePictureUri = (product: ProductModel) => {
-  const uri = product.pictureAddress ?? product.pictureAdress ?? '';
+  const rawUri = product.pictureAddress ?? product.pictureAdress ?? '';
+  const uri = rawUri.trim();
   if (!uri) {
     return null;
   }
   if (uri.startsWith('http') || uri.startsWith('data:')) {
     return uri;
   }
-  return null;
+
+  const base64Payload = uri.replace(/\s+/g, '');
+  const isBase64 =
+    base64Payload.length >= 16 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(base64Payload);
+
+  if (!isBase64) {
+    return null;
+  }
+
+  const mimeType = (() => {
+    if (base64Payload.startsWith('/9j/')) {
+      return 'image/jpeg';
+    }
+    if (base64Payload.startsWith('iVBOR')) {
+      return 'image/png';
+    }
+    if (base64Payload.startsWith('R0lGOD')) {
+      return 'image/gif';
+    }
+    if (base64Payload.startsWith('UklGR')) {
+      return 'image/webp';
+    }
+    return 'image/jpeg';
+  })();
+
+  return `data:${mimeType};base64,${base64Payload}`;
 };
 
 export const resolveFileSource = (product: ProductModel) => {

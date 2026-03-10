@@ -1,18 +1,26 @@
-import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View, ViewStyle } from 'react-native';
-import Svg, {
-  Circle,
-  Defs,
-  LinearGradient,
-  Stop,
-  Text as SvgText,
-  ClipPath,
-  Rect,
-  G,
-  Line,
-} from 'react-native-svg';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  StyleSheet,
+  Text,
+  View,
+  ViewStyle,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../contexts/ThemeContext';
 import { useI18n } from '../contexts/I18nContext';
+
+export type SkeletonVariant =
+  | 'generic'
+  | 'dashboard'
+  | 'customers'
+  | 'orders'
+  | 'products'
+  | 'bills'
+  | 'payables'
+  | 'reports';
 
 type NervLoaderProps = {
   label?: string;
@@ -21,9 +29,310 @@ type NervLoaderProps = {
   fullScreen?: boolean;
   inline?: boolean;
   style?: ViewStyle;
+  variant?: SkeletonVariant;
 };
 
-const AnimatedRect = Animated.createAnimatedComponent(Rect);
+type SkeletonBlockProps = {
+  baseColor: string;
+  highlightColor: string;
+  reduceMotionEnabled: boolean;
+  shimmerTranslate: Animated.AnimatedInterpolation<string | number>;
+  style: ViewStyle;
+};
+
+function SkeletonBlock({
+  baseColor,
+  highlightColor,
+  reduceMotionEnabled,
+  shimmerTranslate,
+  style,
+}: SkeletonBlockProps) {
+  return (
+    <View style={[styles.block, style, { backgroundColor: baseColor }]}>
+      {!reduceMotionEnabled && (
+        <Animated.View style={[styles.shimmerTrack, { transform: [{ translateX: shimmerTranslate }] }]}>
+          <LinearGradient
+            colors={['transparent', highlightColor, 'transparent']}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={styles.shimmerGradient}
+          />
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
+type SkeletonPalette = {
+  base: string;
+  highlight: string;
+  cardBackground: string;
+  borderColor: string;
+};
+
+type CommonSkeletonProps = {
+  reduceMotionEnabled: boolean;
+  shimmerTranslate: Animated.AnimatedInterpolation<string | number>;
+  palette: SkeletonPalette;
+};
+
+function HeaderSkeleton({ reduceMotionEnabled, shimmerTranslate, palette }: CommonSkeletonProps) {
+  return (
+    <View style={styles.headerSkeleton}>
+      <SkeletonBlock
+        style={styles.headerTitle}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+      <SkeletonBlock
+        style={styles.headerSubtitle}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+    </View>
+  );
+}
+
+function ToolbarSkeleton({
+  reduceMotionEnabled,
+  shimmerTranslate,
+  palette,
+  compact = false,
+}: CommonSkeletonProps & { compact?: boolean }) {
+  return (
+    <View style={[styles.toolbarSkeleton, compact && styles.toolbarSkeletonCompact]}>
+      <SkeletonBlock
+        style={compact ? styles.toolbarSearchCompact : styles.toolbarSearch}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+      <SkeletonBlock
+        style={styles.toolbarButton}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+    </View>
+  );
+}
+
+function ListCardSkeleton({
+  reduceMotionEnabled,
+  shimmerTranslate,
+  palette,
+  withMedia = false,
+  withActions = false,
+}: CommonSkeletonProps & { withMedia?: boolean; withActions?: boolean }) {
+  return (
+    <View style={[styles.cardSkeleton, { borderColor: palette.borderColor, backgroundColor: palette.cardBackground }]}>
+      {withMedia && (
+        <SkeletonBlock
+          style={styles.cardMedia}
+          baseColor={palette.base}
+          highlightColor={palette.highlight}
+          reduceMotionEnabled={reduceMotionEnabled}
+          shimmerTranslate={shimmerTranslate}
+        />
+      )}
+      <SkeletonBlock
+        style={styles.cardTitle}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+      <SkeletonBlock
+        style={styles.cardSubtitle}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+      <View style={styles.cardMetaRow}>
+        <SkeletonBlock
+          style={styles.cardMetaItem}
+          baseColor={palette.base}
+          highlightColor={palette.highlight}
+          reduceMotionEnabled={reduceMotionEnabled}
+          shimmerTranslate={shimmerTranslate}
+        />
+        <SkeletonBlock
+          style={styles.cardMetaItem}
+          baseColor={palette.base}
+          highlightColor={palette.highlight}
+          reduceMotionEnabled={reduceMotionEnabled}
+          shimmerTranslate={shimmerTranslate}
+        />
+        <SkeletonBlock
+          style={styles.cardMetaItem}
+          baseColor={palette.base}
+          highlightColor={palette.highlight}
+          reduceMotionEnabled={reduceMotionEnabled}
+          shimmerTranslate={shimmerTranslate}
+        />
+      </View>
+      {withActions && (
+        <View style={styles.cardActionsRow}>
+          <SkeletonBlock
+            style={styles.actionButtonSkeleton}
+            baseColor={palette.base}
+            highlightColor={palette.highlight}
+            reduceMotionEnabled={reduceMotionEnabled}
+            shimmerTranslate={shimmerTranslate}
+          />
+          <SkeletonBlock
+            style={styles.actionButtonSkeleton}
+            baseColor={palette.base}
+            highlightColor={palette.highlight}
+            reduceMotionEnabled={reduceMotionEnabled}
+            shimmerTranslate={shimmerTranslate}
+          />
+        </View>
+      )}
+    </View>
+  );
+}
+
+function DashboardSkeleton(props: CommonSkeletonProps) {
+  const { reduceMotionEnabled, shimmerTranslate, palette } = props;
+  return (
+    <View style={styles.pageSkeleton}>
+      <HeaderSkeleton {...props} />
+
+      <View style={styles.statsGrid}>
+        {Array.from({ length: 4 }).map((_, index) => (
+          <View key={`stat-${index}`} style={[styles.statCard, { borderColor: palette.borderColor, backgroundColor: palette.cardBackground }]}>
+            <SkeletonBlock
+              style={styles.statIcon}
+              baseColor={palette.base}
+              highlightColor={palette.highlight}
+              reduceMotionEnabled={reduceMotionEnabled}
+              shimmerTranslate={shimmerTranslate}
+            />
+            <SkeletonBlock
+              style={styles.statValue}
+              baseColor={palette.base}
+              highlightColor={palette.highlight}
+              reduceMotionEnabled={reduceMotionEnabled}
+              shimmerTranslate={shimmerTranslate}
+            />
+            <SkeletonBlock
+              style={styles.statLabel}
+              baseColor={palette.base}
+              highlightColor={palette.highlight}
+              reduceMotionEnabled={reduceMotionEnabled}
+              shimmerTranslate={shimmerTranslate}
+            />
+          </View>
+        ))}
+      </View>
+
+      <ListCardSkeleton {...props} />
+      <ListCardSkeleton {...props} />
+    </View>
+  );
+}
+
+function CustomersSkeleton(props: CommonSkeletonProps) {
+  return (
+    <View style={styles.pageSkeleton}>
+      <HeaderSkeleton {...props} />
+      <View style={styles.statsRow}>
+        {Array.from({ length: 3 }).map((_, index) => (
+          <SkeletonBlock
+            key={`customer-stat-${index}`}
+            style={styles.statsChip}
+            baseColor={props.palette.base}
+            highlightColor={props.palette.highlight}
+            reduceMotionEnabled={props.reduceMotionEnabled}
+            shimmerTranslate={props.shimmerTranslate}
+          />
+        ))}
+      </View>
+      <ToolbarSkeleton {...props} compact />
+      {Array.from({ length: 3 }).map((_, index) => (
+        <ListCardSkeleton key={`customer-card-${index}`} {...props} />
+      ))}
+    </View>
+  );
+}
+
+function ProductsSkeleton(props: CommonSkeletonProps) {
+  return (
+    <View style={styles.pageSkeleton}>
+      <HeaderSkeleton {...props} />
+      <ToolbarSkeleton {...props} compact />
+      {Array.from({ length: 3 }).map((_, index) => (
+        <ListCardSkeleton key={`product-card-${index}`} {...props} withMedia withActions />
+      ))}
+    </View>
+  );
+}
+
+function OrdersSkeleton(props: CommonSkeletonProps) {
+  return (
+    <View style={styles.pageSkeleton}>
+      <HeaderSkeleton {...props} />
+      <SkeletonBlock
+        style={styles.dateRangeSkeleton}
+        baseColor={props.palette.base}
+        highlightColor={props.palette.highlight}
+        reduceMotionEnabled={props.reduceMotionEnabled}
+        shimmerTranslate={props.shimmerTranslate}
+      />
+      {Array.from({ length: 3 }).map((_, index) => (
+        <ListCardSkeleton key={`order-card-${index}`} {...props} withActions />
+      ))}
+    </View>
+  );
+}
+
+function CompactListSkeleton(props: CommonSkeletonProps) {
+  return (
+    <View style={styles.pageSkeleton}>
+      <HeaderSkeleton {...props} />
+      <ToolbarSkeleton {...props} />
+      {Array.from({ length: 3 }).map((_, index) => (
+        <ListCardSkeleton key={`list-card-${index}`} {...props} />
+      ))}
+    </View>
+  );
+}
+
+function PanelSkeleton(props: CommonSkeletonProps) {
+  return (
+    <View style={styles.panelSkeleton}>
+      <SkeletonBlock
+        style={styles.panelTitle}
+        baseColor={props.palette.base}
+        highlightColor={props.palette.highlight}
+        reduceMotionEnabled={props.reduceMotionEnabled}
+        shimmerTranslate={props.shimmerTranslate}
+      />
+      <SkeletonBlock
+        style={styles.panelLine}
+        baseColor={props.palette.base}
+        highlightColor={props.palette.highlight}
+        reduceMotionEnabled={props.reduceMotionEnabled}
+        shimmerTranslate={props.shimmerTranslate}
+      />
+      <SkeletonBlock
+        style={styles.panelLineShort}
+        baseColor={props.palette.base}
+        highlightColor={props.palette.highlight}
+        reduceMotionEnabled={props.reduceMotionEnabled}
+        shimmerTranslate={props.shimmerTranslate}
+      />
+    </View>
+  );
+}
 
 export function NervLoader({
   label,
@@ -32,77 +341,135 @@ export function NervLoader({
   fullScreen = false,
   inline = false,
   style,
+  variant = 'generic',
 }: NervLoaderProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
-  const spin = useRef(new Animated.Value(0)).current;
-  const fill = useRef(new Animated.Value(0)).current;
-  const resolvedLabel = label ?? t('Synchronizing EVA-01');
-  const resolvedSubtitle = subtitle ?? t('LCL circulation nominal | Loading...');
+  const shimmer = useRef(new Animated.Value(0)).current;
+  const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
+
+  const resolvedLabel = label ?? t('Loading...');
+  const resolvedSubtitle = subtitle ?? t('Please wait while data is synchronized.');
+
+  const palette = useMemo(
+    () => ({
+      base: colors.cardBgTo,
+      highlight: `${colors.textPrimary}24`,
+      cardBackground: colors.cardBgFrom,
+      borderColor: colors.cardBorder,
+    }),
+    [colors.cardBgFrom, colors.cardBgTo, colors.cardBorder, colors.textPrimary],
+  );
 
   useEffect(() => {
-    const spinLoop = Animated.loop(
-      Animated.timing(spin, {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (mounted) {
+          setReduceMotionEnabled(enabled);
+        }
+      })
+      .catch(() => undefined);
+
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', (enabled) => {
+      setReduceMotionEnabled(enabled);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotionEnabled) {
+      shimmer.stopAnimation();
+      shimmer.setValue(0);
+      return;
+    }
+
+    shimmer.setValue(0);
+    const shimmerLoop = Animated.loop(
+      Animated.timing(shimmer, {
         toValue: 1,
-        duration: 3200,
-        easing: Easing.linear,
+        duration: 1350,
+        easing: Easing.inOut(Easing.ease),
         useNativeDriver: true,
       }),
     );
-
-    const fillLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(fill, {
-          toValue: 1,
-          duration: 2600,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: false,
-        }),
-        Animated.timing(fill, {
-          toValue: 0.2,
-          duration: 1400,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: false,
-        }),
-      ]),
-    );
-
-    spinLoop.start();
-    fillLoop.start();
+    shimmerLoop.start();
 
     return () => {
-      spinLoop.stop();
-      fillLoop.stop();
-      spin.setValue(0);
-      fill.setValue(0);
+      shimmerLoop.stop();
     };
-  }, [spin, fill]);
+  }, [reduceMotionEnabled, shimmer]);
 
-  const rotation = spin.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
+  const shimmerDistance = Math.max(size * 1.9, 420);
+  const shimmerTranslate = useMemo(
+    () =>
+      shimmer.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-140, shimmerDistance],
+      }),
+    [shimmer, shimmerDistance],
+  );
 
-  const ringSize = size;
-  const coreSize = size * 0.62;
-  const coreStart = (ringSize - coreSize) / 2;
+  const commonProps: CommonSkeletonProps = {
+    reduceMotionEnabled,
+    shimmerTranslate,
+    palette,
+  };
 
-  const fillHeight = fill.interpolate({
-    inputRange: [0, 1],
-    outputRange: [coreSize * 0.18, coreSize * 0.72],
-  });
-  const fillY = fill.interpolate({
-    inputRange: [0, 1],
-    outputRange: [coreStart + coreSize * 0.72, coreStart + coreSize * 0.22],
-  });
-  const textFillHeight = fill.interpolate({
-    inputRange: [0, 1],
-    outputRange: [coreSize * 0.14, coreSize * 0.55],
-  });
-  const textFillY = fill.interpolate({
-    inputRange: [0, 1],
-    outputRange: [coreStart + coreSize * 0.64, coreStart + coreSize * 0.28],
-  });
+  const renderInline = () => (
+    <View style={styles.inlineSkeleton}>
+      <SkeletonBlock
+        style={styles.inlineAvatar}
+        baseColor={palette.base}
+        highlightColor={palette.highlight}
+        reduceMotionEnabled={reduceMotionEnabled}
+        shimmerTranslate={shimmerTranslate}
+      />
+      <View style={styles.inlineLines}>
+        <SkeletonBlock
+          style={styles.inlineLinePrimary}
+          baseColor={palette.base}
+          highlightColor={palette.highlight}
+          reduceMotionEnabled={reduceMotionEnabled}
+          shimmerTranslate={shimmerTranslate}
+        />
+        <SkeletonBlock
+          style={styles.inlineLineSecondary}
+          baseColor={palette.base}
+          highlightColor={palette.highlight}
+          reduceMotionEnabled={reduceMotionEnabled}
+          shimmerTranslate={shimmerTranslate}
+        />
+      </View>
+    </View>
+  );
+
+  const renderPage = () => {
+    if (!fullScreen) {
+      return <PanelSkeleton {...commonProps} />;
+    }
+
+    switch (variant) {
+      case 'dashboard':
+        return <DashboardSkeleton {...commonProps} />;
+      case 'customers':
+        return <CustomersSkeleton {...commonProps} />;
+      case 'orders':
+        return <OrdersSkeleton {...commonProps} />;
+      case 'products':
+        return <ProductsSkeleton {...commonProps} />;
+      case 'bills':
+      case 'payables':
+      case 'reports':
+      case 'generic':
+      default:
+        return <CompactListSkeleton {...commonProps} />;
+    }
+  };
 
   return (
     <View
@@ -113,163 +480,20 @@ export function NervLoader({
         { backgroundColor: inline ? 'transparent' : colors.appBg },
         style,
       ]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={resolvedLabel}
+      accessibilityHint={resolvedSubtitle}
     >
-      <View style={styles.logoStack}>
-        <Animated.View
-          style={[
-            styles.ringWrap,
-            {
-              width: ringSize,
-              height: ringSize,
-              transform: [{ rotate: rotation }],
-            },
-          ]}
-        >
-          <Svg width={ringSize} height={ringSize} viewBox={`0 0 ${ringSize} ${ringSize}`}>
-            <Circle
-              cx={ringSize / 2}
-              cy={ringSize / 2}
-              r={ringSize / 2 - ringSize * 0.06}
-              stroke={colors.primaryPurple}
-              strokeWidth={ringSize * 0.045}
-              strokeOpacity={0.9}
-              fill="none"
-            />
-            <Circle
-              cx={ringSize / 2}
-              cy={ringSize / 2}
-              r={ringSize / 2 - ringSize * 0.12}
-              stroke={colors.neonGreen}
-              strokeWidth={ringSize * 0.022}
-              strokeDasharray="8 14"
-              strokeOpacity={0.85}
-              fill="none"
-            />
-          </Svg>
-        </Animated.View>
-
-        <Svg width={ringSize} height={ringSize} viewBox={`0 0 ${ringSize} ${ringSize}`}>
-          <Defs>
-            <LinearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor={`${colors.cardBgFrom}F0`} />
-              <Stop offset="1" stopColor={`${colors.cardBgFrom}C0`} />
-            </LinearGradient>
-            <LinearGradient id="water" x1="0" y1="1" x2="0" y2="0">
-              <Stop offset="0" stopColor={colors.neonGreen} stopOpacity="0.95" />
-              <Stop offset="1" stopColor={colors.primaryPurple} stopOpacity="0.9" />
-            </LinearGradient>
-            <ClipPath id="circle-clip">
-              <Circle cx={ringSize / 2} cy={ringSize / 2} r={coreSize / 2} />
-            </ClipPath>
-            <ClipPath id="logo-clip">
-              <SvgText
-                x={ringSize / 2}
-                y={ringSize * 0.54}
-                fontSize={coreSize * 0.24}
-                fontWeight="900"
-                textAnchor="middle"
-              >
-                NERV
-              </SvgText>
-            </ClipPath>
-          </Defs>
-
-          <G clipPath="url(#circle-clip)">
-            <AnimatedRect
-              x={coreStart}
-              y={fillY}
-              width={coreSize}
-              height={fillHeight}
-              fill="url(#water)"
-              opacity={0.9}
-            />
-            <AnimatedRect
-              x={coreStart + coreSize * 0.12}
-              y={fillY}
-              width={coreSize * 0.76}
-              height={fillHeight}
-              fill={colors.primaryPurple}
-              opacity={0.25}
-            />
-          </G>
-
-          <Circle
-            cx={ringSize / 2}
-            cy={ringSize / 2}
-            r={coreSize / 2}
-            fill="url(#glass)"
-            stroke={colors.cardBorder}
-            strokeWidth={2}
-          />
-
-          <AnimatedRect
-            x={coreStart + coreSize * 0.12}
-            y={textFillY}
-            width={coreSize * 0.76}
-            height={textFillHeight}
-            fill="url(#water)"
-            opacity={0.9}
-            clipPath="url(#logo-clip)"
-          />
-
-          <SvgText
-            x={ringSize / 2}
-            y={ringSize * 0.54}
-            fontSize={coreSize * 0.24}
-            fontWeight="900"
-            textAnchor="middle"
-            fill={colors.textPrimary}
-            opacity={0.12}
-          >
-            NERV
-          </SvgText>
-          <SvgText
-            x={ringSize / 2}
-            y={ringSize * 0.54}
-            fontSize={coreSize * 0.24}
-            fontWeight="900"
-            textAnchor="middle"
-            fill={colors.textPrimary}
-            stroke={colors.appBg}
-            strokeWidth={1}
-            opacity={0.8}
-          >
-            NERV
-          </SvgText>
-
-          <Line
-            x1={ringSize * 0.36}
-            y1={ringSize * 0.57}
-            x2={ringSize * 0.64}
-            y2={ringSize * 0.46}
-            stroke={colors.accentOrange}
-            strokeWidth={3}
-            strokeLinecap="round"
-            opacity={0.9}
-          />
-        </Svg>
-      </View>
+      {inline ? renderInline() : renderPage()}
 
       <View style={[styles.textBlock, inline && styles.inlineTextBlock]}>
         {!!resolvedLabel && (
-          <Text
-            style={[
-              styles.loadingTitle,
-              inline && styles.inlineTitle,
-              { color: colors.textPrimary },
-            ]}
-          >
+          <Text style={[styles.loadingTitle, inline && styles.inlineTitle, { color: colors.textPrimary }]}>
             {resolvedLabel}
           </Text>
         )}
         {!!resolvedSubtitle && (
-          <Text
-            style={[
-              styles.loadingSubtitle,
-              inline && styles.inlineSubtitle,
-              { color: colors.textSecondary },
-            ]}
-          >
+          <Text style={[styles.loadingSubtitle, inline && styles.inlineSubtitle, { color: colors.textSecondary }]}>
             {resolvedSubtitle}
           </Text>
         )}
@@ -280,51 +504,229 @@ export function NervLoader({
 
 const styles = StyleSheet.create({
   loadingWrap: {
+    width: '100%',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 36,
-    gap: 8,
+    gap: 14,
   },
   fullScreen: {
     flex: 1,
-    width: '100%',
     minHeight: 420,
   },
   inlineWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    gap: 12,
-    paddingVertical: 8,
+    gap: 10,
+    paddingHorizontal: 0,
+    paddingVertical: 4,
   },
-  logoStack: {
+  pageSkeleton: {
+    width: '100%',
+    maxWidth: 940,
+    gap: 14,
+  },
+  panelSkeleton: {
+    width: '100%',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  panelTitle: {
+    width: '56%',
+    height: 16,
+    borderRadius: 8,
+  },
+  panelLine: {
+    width: '100%',
+    height: 12,
+    borderRadius: 6,
+  },
+  panelLineShort: {
+    width: '72%',
+    height: 12,
+    borderRadius: 6,
+  },
+  headerSkeleton: {
+    gap: 10,
+  },
+  headerTitle: {
+    width: '58%',
+    height: 24,
+    borderRadius: 8,
+  },
+  headerSubtitle: {
+    width: '40%',
+    height: 14,
+    borderRadius: 6,
+  },
+  toolbarSkeleton: {
+    flexDirection: 'row',
+    gap: 10,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  ringWrap: {
+  toolbarSkeletonCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  toolbarSearch: {
+    flex: 1,
+    height: 42,
+    borderRadius: 12,
+  },
+  toolbarSearchCompact: {
+    width: '100%',
+    height: 42,
+    borderRadius: 12,
+  },
+  toolbarButton: {
+    width: 116,
+    height: 42,
+    borderRadius: 12,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: 120,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    gap: 8,
+  },
+  statIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+  },
+  statValue: {
+    width: '62%',
+    height: 16,
+    borderRadius: 8,
+  },
+  statLabel: {
+    width: '80%',
+    height: 12,
+    borderRadius: 6,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  statsChip: {
+    width: 112,
+    height: 34,
+    borderRadius: 17,
+  },
+  dateRangeSkeleton: {
+    width: '100%',
+    height: 58,
+    borderRadius: 14,
+  },
+  cardSkeleton: {
+    width: '100%',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    gap: 10,
+  },
+  cardMedia: {
+    width: '100%',
+    height: 118,
+    borderRadius: 12,
+  },
+  cardTitle: {
+    width: '62%',
+    height: 18,
+    borderRadius: 8,
+  },
+  cardSubtitle: {
+    width: '46%',
+    height: 13,
+    borderRadius: 6,
+  },
+  cardMetaRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  cardMetaItem: {
+    width: 72,
+    height: 12,
+    borderRadius: 6,
+  },
+  cardActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButtonSkeleton: {
+    width: 108,
+    height: 36,
+    borderRadius: 10,
+  },
+  inlineSkeleton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  inlineAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+  },
+  inlineLines: {
+    gap: 6,
+  },
+  inlineLinePrimary: {
+    width: 138,
+    height: 11,
+    borderRadius: 6,
+  },
+  inlineLineSecondary: {
+    width: 92,
+    height: 9,
+    borderRadius: 5,
+  },
+  block: {
+    overflow: 'hidden',
+  },
+  shimmerTrack: {
     position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 120,
+  },
+  shimmerGradient: {
+    width: 120,
+    height: '100%',
   },
   textBlock: {
     alignItems: 'center',
+    gap: 2,
   },
   inlineTextBlock: {
     alignItems: 'flex-start',
   },
   loadingTitle: {
-    marginTop: 8,
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   inlineTitle: {
-    marginTop: 0,
-    fontSize: 14,
+    fontSize: 12,
   },
   loadingSubtitle: {
     fontSize: 12,
-    letterSpacing: 0.5,
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
   inlineSubtitle: {
     fontSize: 11,
+    textAlign: 'left',
   },
 });

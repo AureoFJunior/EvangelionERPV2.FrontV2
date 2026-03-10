@@ -28,6 +28,9 @@ export interface Order {
   customer: string;
   customerId?: string | number;
   date: string;
+  payday?: string | null;
+  paymentScheduledDate?: string | null;
+  paymentDate?: string | null;
   createdAt?: string;
   updatedAt?: string;
   total: number;
@@ -51,7 +54,10 @@ export interface OrderUpdatePayload {
   isActive?: boolean;
   enterpriseId?: string;
   payday?: string | null;
-  paymentScheduledDate?: string;
+  paymentScheduledDate?: string | null;
+  PaymentScheduledDate?: string | null;
+  paymentDate?: string | null;
+  PaymentDate?: string | null;
   userId?: string | number;
   status: number;
   updatedAt: string;
@@ -145,6 +151,11 @@ export interface OrderCreatePayload {
   totalValue?: number;
   status: number;
   items: number;
+  payday?: string | null;
+  paymentScheduledDate?: string | null;
+  PaymentScheduledDate?: string | null;
+  paymentDate?: string | null;
+  PaymentDate?: string | null;
   customerId?: string | number;
   enterpriseId?: string;
   orderedProduct?: OrderLineItem[];
@@ -191,6 +202,7 @@ export interface CustomerFilter {
   document?: string;
   email?: string;
   status?: string;
+  isActive?: boolean;
   enterpriseId?: string;
 }
 
@@ -246,7 +258,7 @@ const pickFirstNumber = (...values: unknown[]) => {
   return null;
 };
 
-const ORDER_STATUS_LABELS = ['Pending', 'Processing', 'Shipped', 'Delivered'] as const;
+const ORDER_STATUS_LABELS = ['Pending', 'Processing', 'Paid', 'Shipped', 'Delivered', 'Finished'] as const;
 
 const resolveOrderStatusLabel = (...values: unknown[]) => {
   for (const value of values) {
@@ -326,10 +338,12 @@ export class ErpService {
     pageSize = 25,
     descending = false,
     filter: ProductFilter = { isActive: true, name: '' },
+    includePictures = false,
   ) {
     const response = await this.client.request<Product[], ProductFilter>({
       path: `/Product/GetProductsByFilter/${descending}/${pageNumber}/${pageSize}`,
       method: 'POST',
+      query: { includePictures },
       body: filter,
     });
 
@@ -1000,13 +1014,27 @@ export class ErpService {
     );
     const statusNormalized = statusCandidate?.toLowerCase();
     const isActive = normalizeBoolean(item.isActive ?? item.active ?? item.is_active);
-    const status =
-      statusNormalized === 'inactive' ||
-      statusNormalized === 'disabled' ||
-      statusNormalized === 'blocked' ||
-      isActive === false
-        ? 'Inactive'
-        : 'Active';
+    const inactiveCustomerStatuses = new Set([
+      'inactive',
+      'disabled',
+      'blocked',
+      'deactivated',
+      'deleted',
+      'removed',
+      'archived',
+      'inativo',
+      'desativado',
+      'desactivado',
+    ]);
+    const status = (() => {
+      if (isActive === true) {
+        return 'Active';
+      }
+      if (isActive === false) {
+        return 'Inactive';
+      }
+      return statusNormalized && inactiveCustomerStatuses.has(statusNormalized) ? 'Inactive' : 'Active';
+    })();
 
     return {
       ...item,
@@ -1277,12 +1305,31 @@ export class ErpService {
         item.orderedAt,
         item.OrderedAt,
         item.ordered_at,
-        item.payday,
-        item.Payday,
-        item.paymentScheduledDate,
-        item.PaymentScheduledDate,
         createdAt,
       ) ?? '';
+
+    const payday =
+      pickFirstString(
+        item.payday,
+        item.Payday,
+        item.pay_day,
+      ) ?? null;
+
+    const paymentScheduledDate =
+      pickFirstString(
+        item.paymentScheduledDate,
+        item.PaymentScheduledDate,
+        item.payment_scheduled_date,
+      ) ?? null;
+
+    const paymentDate =
+      pickFirstString(
+        item.paymentDate,
+        item.PaymentDate,
+        item.paidAt,
+        item.PaidAt,
+        item.paid_at,
+      ) ?? null;
 
     const totalValue = pickFirstNumber(
       item.totalValue,
@@ -1389,6 +1436,9 @@ export class ErpService {
       customer,
       customerId,
       date,
+      payday,
+      paymentScheduledDate,
+      paymentDate,
       createdAt,
       updatedAt,
       total: totalValue ?? 0,

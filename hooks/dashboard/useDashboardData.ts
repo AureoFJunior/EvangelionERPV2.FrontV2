@@ -19,6 +19,8 @@ export function useDashboardData({
   authLoading,
   enterpriseId,
 }: UseDashboardDataParams) {
+  const DASHBOARD_PAGE_SIZE = 100;
+  const DASHBOARD_MAX_PAGES = 25;
   const [products, setProducts] = useState<ProductModel[]>([]);
   const [orders, setOrders] = useState<OrderModel[]>([]);
   const [customers, setCustomers] = useState<CustomerModel[]>([]);
@@ -39,18 +41,72 @@ export function useDashboardData({
       setLoading(true);
       setErrorMessage(null);
 
+      const fetchAllPages = async <T extends { id?: string | number | null }>(
+        fetchPage: (pageNumber: number, pageSize: number) => Promise<{
+          ok: boolean;
+          data: T[] | null;
+          error?: string;
+        }>,
+      ) => {
+        const allRows: T[] = [];
+        const seenKeys = new Set<string>();
+        for (let page = 1; page <= DASHBOARD_MAX_PAGES; page += 1) {
+          const response = await fetchPage(page, DASHBOARD_PAGE_SIZE);
+          if (!response.ok) {
+            return { ok: false as const, data: null, error: response.error };
+          }
+
+          const rows = response.data ?? [];
+          if (rows.length === 0) {
+            break;
+          }
+
+          let addedRows = 0;
+          rows.forEach((row, index) => {
+            const rawId = row?.id;
+            const key =
+              rawId !== undefined && rawId !== null && String(rawId).trim() !== ''
+                ? String(rawId)
+                : `page:${page}:idx:${index}`;
+
+            if (seenKeys.has(key)) {
+              return;
+            }
+
+            seenKeys.add(key);
+            allRows.push(row);
+            addedRows += 1;
+          });
+
+          // Some backends cap page size silently; stop only when a page yields no new rows.
+          if (addedRows === 0) {
+            break;
+          }
+        }
+
+        return { ok: true as const, data: allRows };
+      };
+
       const [productsResponse, ordersResponse, customersResponse] = await Promise.all([
-        erpService.fetchProducts(1, 200, false, {
-          isActive: true,
-          name: '',
-          enterpriseId: enterpriseId ?? undefined,
-        }),
-        erpService.fetchOrders(1, 200, false, {
-          enterpriseId: enterpriseId ?? undefined,
-        }),
-        erpService.fetchCustomers(1, 200, false, {
-          enterpriseId: enterpriseId ?? undefined,
-        }),
+        fetchAllPages<ProductModel>((pageNumber, pageSize) =>
+          erpService.fetchProducts(pageNumber, pageSize, false, {
+            isActive: true,
+            name: '',
+            enterpriseId: enterpriseId ?? undefined,
+          }),
+        ),
+        fetchAllPages<OrderModel>((pageNumber, pageSize) =>
+          erpService.fetchOrders(pageNumber, pageSize, false, {
+            isActive: true,
+            enterpriseId: enterpriseId ?? undefined,
+          }),
+        ),
+        fetchAllPages<CustomerModel>((pageNumber, pageSize) =>
+          erpService.fetchCustomers(pageNumber, pageSize, false, {
+            isActive: true,
+            enterpriseId: enterpriseId ?? undefined,
+          }),
+        ),
       ]);
 
       if (!active) {
@@ -60,14 +116,14 @@ export function useDashboardData({
       let nextError: string | null = null;
 
       if (productsResponse.ok && productsResponse.data) {
-        setProducts(productsResponse.data);
+        setProducts(productsResponse.data.filter((product) => product.isActive === true));
       } else {
         setProducts([]);
         nextError = productsResponse.error ?? 'Unable to load products';
       }
 
       if (ordersResponse.ok && ordersResponse.data) {
-        setOrders(ordersResponse.data);
+        setOrders(ordersResponse.data.filter((order) => order.isActive === true));
       } else {
         setOrders([]);
         if (!nextError) {
@@ -76,7 +132,7 @@ export function useDashboardData({
       }
 
       if (customersResponse.ok && customersResponse.data) {
-        setCustomers(customersResponse.data);
+        setCustomers(customersResponse.data.filter((customer) => customer.isActive === true));
       } else {
         setCustomers([]);
         if (!nextError) {

@@ -1,15 +1,15 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  Image,
   Platform,
   KeyboardAvoidingView,
   ScrollView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
+import { AntDesign, Feather } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
 import { Button, Divider, Surface, TextInput as PaperTextInput, TouchableRipple } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
@@ -19,6 +19,55 @@ import { useLoginController } from '../hooks/auth/useLoginController';
 import { useI18n } from '../contexts/I18nContext';
 
 WebBrowser.maybeCompleteAuthSession();
+const WEB_PARTICLE_COUNT = 9600;
+
+type ParticleSeed = {
+  id: number;
+  baseX: number;
+  baseY: number;
+  depth: number;
+  radius: number;
+  speed: number;
+  phase: number;
+  size: number;
+};
+
+type ParticleFrameRef = {
+  x: number;
+  y: number;
+};
+
+const createParticleSeeds = (): ParticleSeed[] =>
+  Array.from({ length: WEB_PARTICLE_COUNT }, (_, index) => ({
+    id: index,
+    baseX: 0.01 + Math.random() * 0.98,
+    baseY: 0.01 + Math.random() * 0.98,
+    depth: 0.04 + Math.random() * 0.15,
+    radius: 7 + Math.random() * 32,
+    speed: 1 + Math.random() * 2.7,
+    phase: Math.random() * Math.PI * 2,
+    size: 0.8 + Math.random() * 2.2,
+  }));
+
+const hexToRgb = (hex: string) => {
+  const sanitized = hex.replace('#', '').trim();
+  const fullHex =
+    sanitized.length === 3
+      ? sanitized
+          .split('')
+          .map((char) => `${char}${char}`)
+          .join('')
+      : sanitized.slice(0, 6);
+  const intValue = Number.parseInt(fullHex, 16);
+  if (Number.isNaN(intValue)) {
+    return { r: 124, g: 77, b: 255 };
+  }
+  return {
+    r: (intValue >> 16) & 255,
+    g: (intValue >> 8) & 255,
+    b: intValue & 255,
+  };
+};
 
 export function Login() {
   const { colors } = useTheme();
@@ -36,8 +85,6 @@ export function Login() {
     submittingMode,
     showPassword,
     setShowPassword,
-    missingWebClientId,
-    googleRequest,
     isLoginDisabled,
     handleLogin,
     startGoogleLogin,
@@ -50,18 +97,163 @@ export function Login() {
   const glassBg = `${colors.cardBgFrom}f2`;
   const inputBg = `${colors.inputBgFrom}f5`;
   const googleBg = `${colors.neonGreen}14`;
+  const isWeb = Platform.OS === 'web';
+  const particleSeedsRef = useRef<ParticleSeed[]>(createParticleSeeds());
+  const particleFramesRef = useRef<ParticleFrameRef[]>(
+    particleSeedsRef.current.map((seed) => ({
+      x: seed.baseX * 1280,
+      y: seed.baseY * 720,
+    })),
+  );
+  const particleCanvasRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isWeb || typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+    const canvas = particleCanvasRef.current as any;
+    if (!canvas || typeof canvas.getContext !== 'function') {
+      return;
+    }
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    const layerElement = canvas.parentElement as any;
+    if (layerElement) {
+      layerElement.style.position = 'fixed';
+      layerElement.style.top = '0';
+      layerElement.style.left = '0';
+      layerElement.style.right = '0';
+      layerElement.style.bottom = '0';
+      layerElement.style.width = '100vw';
+      layerElement.style.height = '100vh';
+      layerElement.style.pointerEvents = 'none';
+      layerElement.style.overflow = 'hidden';
+      layerElement.style.zIndex = '0';
+    }
+    canvas.style.position = 'fixed';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.right = '0';
+    canvas.style.bottom = '0';
+    canvas.style.width = '100vw';
+    canvas.style.height = '100vh';
+    canvas.style.pointerEvents = 'none';
+
+    const viewport = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+    const pointer = {
+      x: viewport.width * 0.5,
+      y: viewport.height * 0.5,
+      targetX: viewport.width * 0.5,
+      targetY: viewport.height * 0.5,
+    };
+    const seeds = particleSeedsRef.current;
+    const frames = particleFramesRef.current;
+    const neonPurpleRgb = hexToRgb('#b84dff');
+    const influenceRadius = 320;
+    const influenceRadiusSq = influenceRadius * influenceRadius;
+    const particleFill = `rgba(${neonPurpleRgb.r}, ${neonPurpleRgb.g}, ${neonPurpleRgb.b}, 0.3)`;
+    let rafId = 0;
+    let lastFrameTime = 0;
+
+    if (frames.length !== seeds.length) {
+      particleFramesRef.current = seeds.map((seed) => ({
+        x: seed.baseX * viewport.width,
+        y: seed.baseY * viewport.height,
+      }));
+    }
+
+    const resizeCanvas = () => {
+      viewport.width = window.innerWidth;
+      viewport.height = window.innerHeight;
+      const pixelRatio = 1;
+      canvas.width = Math.floor(viewport.width * pixelRatio);
+      canvas.height = Math.floor(viewport.height * pixelRatio);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    };
+
+    const handlePointerMove = (event: any) => {
+      pointer.targetX = event.clientX;
+      pointer.targetY = event.clientY;
+    };
+
+    const animate = (time: number) => {
+      const delta = lastFrameTime === 0 ? 16 : Math.min(34, time - lastFrameTime);
+      lastFrameTime = time;
+      const deltaFactor = delta / 16;
+      pointer.x += (pointer.targetX - pointer.x) * 0.1 * deltaFactor;
+      pointer.y += (pointer.targetY - pointer.y) * 0.1 * deltaFactor;
+      context.clearRect(0, 0, viewport.width, viewport.height);
+
+      for (let index = 0; index < seeds.length; index += 1) {
+        const seed = seeds[index];
+        const frame = particleFramesRef.current[index];
+        const sway = time * 0.00035 * seed.speed + seed.phase;
+        const orbitX = Math.cos(sway) * seed.radius;
+        const orbitY = Math.sin(sway * 1.2) * seed.radius * 0.75;
+        const anchorX = seed.baseX * viewport.width + orbitX;
+        const anchorY = seed.baseY * viewport.height + orbitY;
+        const dx = anchorX - pointer.x;
+        const dy = anchorY - pointer.y;
+        const distanceSq = dx * dx + dy * dy;
+        let targetX = anchorX;
+        let targetY = anchorY;
+
+        if (distanceSq < influenceRadiusSq) {
+          const distance = Math.sqrt(distanceSq) || 1;
+          const influence = Math.max(0, 1 - distance / influenceRadius);
+          const easedInfluence = influence * influence;
+          const pushStrength = easedInfluence * (24 + seed.depth * 160);
+          targetX += (dx / distance) * pushStrength;
+          targetY += (dy / distance) * pushStrength;
+        }
+
+        const frameLerp = 0.16 * deltaFactor;
+        frame.x += (targetX - frame.x) * frameLerp;
+        frame.y += (targetY - frame.y) * frameLerp;
+      }
+
+      context.fillStyle = particleFill;
+      context.beginPath();
+      for (let index = 0; index < seeds.length; index += 1) {
+        const seed = seeds[index];
+        const frame = particleFramesRef.current[index];
+        context.moveTo(frame.x + seed.size, frame.y);
+        context.arc(frame.x, frame.y, seed.size, 0, Math.PI * 2);
+      }
+      context.fill();
+
+      rafId = window.requestAnimationFrame(animate);
+    };
+
+    resizeCanvas();
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('resize', resizeCanvas);
+    rafId = window.requestAnimationFrame(animate);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('resize', resizeCanvas);
+    };
+  }, [isWeb]);
 
   return (
-    <View style={styles.background}>
-      <LinearGradient
-        colors={[colors.appBg, colors.cardBgTo]}
-        start={{ x: 0.1, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
-      <View style={[styles.glow, styles.glowTop, { backgroundColor: `${colors.secondaryPurple}40` }]} />
-      <View style={[styles.glow, styles.glowBottom, { backgroundColor: `${colors.neonGreen}2d` }]} />
-
+    <View style={[styles.background, { backgroundColor: colors.appBg }]}>
+      {isWeb && (
+        <View pointerEvents="none" style={styles.particlesLayer}>
+          {React.createElement('canvas', {
+            ref: particleCanvasRef,
+            style: styles.particlesCanvas as any,
+          })}
+        </View>
+      )}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
@@ -71,7 +263,7 @@ export function Login() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Logo Card */}
+          {/* Unified Login Card */}
           <Surface
             style={[
               styles.glassCard,
@@ -85,36 +277,37 @@ export function Login() {
               tint="light"
               style={[styles.blurContainer, isCompact && styles.blurContainerCompact]}
             >
-              <View style={[styles.logoContainer, isCompact && styles.logoContainerCompact]}>
-                <View style={[styles.logoBox, { backgroundColor: colors.primaryPurple }, isCompact && styles.logoBoxCompact]}>
-                  <Text style={[styles.logoText, { color: colors.neonGreen }]}>N</Text>
+              <View style={styles.cardSections}>
+                <View style={[styles.logoContainer, isCompact && styles.logoContainerCompact]}>
+                  <View style={[styles.logoBox, { backgroundColor: colors.primaryPurple }, isCompact && styles.logoBoxCompact]}>
+                    <Image source={require('../assets/images/icon.png')} style={styles.logoImage} resizeMode="contain" />
+                  </View>
+                  <View style={styles.logoTextContainer}>
+                    <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
+                      NERV ERP
+                    </Text>
+                    <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+                      {t('Secure Access Protocol')}
+                    </Text>
+                    <View
+                      style={[
+                        styles.heroTag,
+                        {
+                          backgroundColor: `${colors.primaryPurple}22`,
+                          borderColor: `${colors.primaryPurple}55`,
+                        },
+                      ]}
+                    >
+                      <View style={[styles.heroTagDot, { backgroundColor: colors.neonGreen }]} />
+                      <Text style={[styles.heroTagText, { color: colors.textSecondary }]}>
+                        {t('Neural Link Ready')}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
-                <View style={styles.logoTextContainer}>
-                  <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-                    NERV ERP
-                  </Text>
-                  <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                    {t('Secure Access Protocol')}
-                  </Text>
-                </View>
-              </View>
-            </BlurView>
-          </Surface>
 
-          {/* Login Form Card */}
-          <Surface
-            style={[
-              styles.glassCard,
-              { borderColor: glassBorder, backgroundColor: glassBg },
-              isCompact && styles.glassCardCompact,
-            ]}
-            elevation={0}
-          >
-            <BlurView
-              intensity={12}
-              tint="light"
-              style={[styles.blurContainer, isCompact && styles.blurContainerCompact]}
-            >
+                <Divider style={[styles.cardDivider, { backgroundColor: colors.cardBorder }]} />
+
               <View style={styles.formContainer}>
                 <Text style={[styles.formTitle, { color: colors.textPrimary }, isCompact && styles.formTitleCompact]}>
                   {t('Login')}
@@ -238,8 +431,16 @@ export function Login() {
                     style={styles.googleRipple}
                   >
                     <View style={[styles.googleContent, isCompact && styles.googleContentCompact]}>
-                      <View style={[styles.googleIconBox, { backgroundColor: `${colors.neonGreen}20` }]}>
-                        <Feather name="globe" size={20} color={colors.neonGreen} />
+                      <View
+                        style={[
+                          styles.googleIconBox,
+                          {
+                            backgroundColor: colors.cardBgFrom,
+                            borderColor: `${colors.cardBorder}aa`,
+                          },
+                        ]}
+                      >
+                        <AntDesign name="google" size={18} color="#4285F4" />
                       </View>
                       <View style={styles.googleTextContainer}>
                         <Text style={[styles.googleTitle, { color: colors.neonGreen }]}>
@@ -253,6 +454,7 @@ export function Login() {
                     </View>
                   </TouchableRipple>
                 </Surface>
+              </View>
               </View>
             </BlurView>
           </Surface>
@@ -274,23 +476,18 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  glow: {
-    position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    opacity: 0.8,
-  },
-  glowTop: {
-    top: -120,
-    right: -140,
-  },
-  glowBottom: {
-    bottom: -140,
-    left: -120,
-  },
   container: {
     flex: 1,
+    zIndex: 1,
+  },
+  particlesLayer: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    zIndex: 0,
+  },
+  particlesCanvas: {
+    width: '100%',
+    height: '100%',
   },
   scrollContent: {
     flexGrow: 1,
@@ -304,10 +501,10 @@ const styles = StyleSheet.create({
   glassCard: {
     width: '100%',
     maxWidth: 480,
-    marginBottom: 20,
-    borderRadius: 22,
+    marginBottom: 18,
+    borderRadius: 24,
     overflow: 'hidden',
-    borderWidth: 1,
+    borderWidth: 1.2,
     ...Platform.select({
       ios: {
         shadowColor: '#2b2016',
@@ -322,13 +519,20 @@ const styles = StyleSheet.create({
   },
   glassCardCompact: {
     marginBottom: 16,
-    borderRadius: 18,
+    borderRadius: 20,
   },
   blurContainer: {
-    padding: 26,
+    padding: 24,
   },
   blurContainerCompact: {
-    padding: 20,
+    padding: 18,
+  },
+  cardSections: {
+    gap: 18,
+  },
+  cardDivider: {
+    height: 1,
+    opacity: 0.45,
   },
   logoContainer: {
     flexDirection: 'row',
@@ -350,14 +554,36 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 14,
   },
-  logoText: {
-    fontSize: 32,
+  logoImage: {
+    width: '82%',
+    height: '82%',
   },
   logoTextContainer: {
     flex: 1,
   },
+  heroTag: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 999,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  heroTagDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+  },
+  heroTagText: {
+    fontSize: 10,
+    letterSpacing: 0.4,
+  },
   title: {
     fontSize: 24,
+    fontWeight: '700',
     letterSpacing: 1.5,
     marginBottom: 4,
   },
@@ -370,14 +596,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   formContainer: {
-    gap: 20,
+    gap: 18,
   },
   formTitle: {
-    fontSize: 32,
+    fontSize: 34,
+    fontWeight: '700',
     marginBottom: -8,
   },
   formTitleCompact: {
-    fontSize: 26,
+    fontSize: 28,
   },
   formSubtitle: {
     fontSize: 13,
@@ -385,8 +612,9 @@ const styles = StyleSheet.create({
   },
   errorBanner: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   errorText: {
     fontSize: 12,
@@ -399,14 +627,14 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   paperInput: {
-    borderRadius: 12,
+    borderRadius: 14,
     fontSize: 15,
   },
   paperInputCompact: {
     minHeight: 50,
   },
   loginButton: {
-    borderRadius: 16,
+    borderRadius: 18,
     ...Platform.select({
       ios: {
         shadowColor: '#2b2016',
@@ -452,7 +680,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   googleButton: {
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1.5,
     overflow: 'hidden',
   },
@@ -470,7 +698,8 @@ const styles = StyleSheet.create({
   googleIconBox: {
     width: 40,
     height: 40,
-    borderRadius: 8,
+    borderRadius: 12,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -479,6 +708,7 @@ const styles = StyleSheet.create({
   },
   googleTitle: {
     fontSize: 15,
+    fontWeight: '600',
     marginBottom: 2,
   },
   googleSubtitle: {

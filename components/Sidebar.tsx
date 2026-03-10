@@ -14,17 +14,27 @@ interface SidebarProps {
   activeModule: string;
   setActiveModule: (module: string) => void;
   layout?: 'side' | 'stacked';
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
-export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: SidebarProps) {
+export function Sidebar({
+  activeModule,
+  setActiveModule,
+  layout = 'side',
+  collapsed = false,
+  onToggleCollapsed,
+}: SidebarProps) {
   const { colors, theme, toggleTheme } = useTheme();
   const { t } = useI18n();
   const { logout, user } = useAuth();
   const { isCompact } = useResponsive();
   const isStacked = layout === 'stacked';
   const isDrawerLayout = isStacked && isCompact;
-  const baseSidebarWidth = 270;
-  const showProfile = !isCompact;
+  const isSideCollapsed = !isStacked && collapsed;
+  const isStackedCollapsed = isStacked && !isDrawerLayout && collapsed;
+  const baseSidebarWidth = isSideCollapsed ? 84 : 270;
+  const showProfile = !isCompact && !isSideCollapsed;
   const avatarUri = user?.avatarUrl?.trim() ?? '';
   const { drawerOpen, setDrawerOpen, avatarError, setAvatarError } = useSidebarState(isDrawerLayout, avatarUri);
   const defaultAvatar = require('../assets/images/icon.png');
@@ -52,21 +62,34 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
     }
   };
 
-  const renderHeader = (showToggle: boolean, toggleIcon: 'menu' | 'x', onToggle: () => void) => (
-    <View style={[styles.header, { borderColor: colors.cardBorder }, isCompact && styles.headerCompact]}>
-      <View style={styles.headerRow}>
-        <View style={styles.logoContainer}>
+  const renderHeader = (
+    showToggle: boolean,
+    toggleIcon: 'menu' | 'x' | 'chevrons-left' | 'chevrons-right' | 'chevrons-up' | 'chevrons-down',
+    onToggle: () => void,
+  ) => (
+    <View
+      style={[
+        styles.header,
+        { borderColor: colors.cardBorder },
+        isCompact && styles.headerCompact,
+        isSideCollapsed && styles.headerCollapsed,
+      ]}
+    >
+      <View style={[styles.headerRow, isSideCollapsed && styles.headerRowCollapsed]}>
+        <View style={[styles.logoContainer, isSideCollapsed && styles.logoContainerCollapsed]}>
           <View style={[styles.logoBox, { borderColor: colors.cardBorder }, isCompact && styles.logoBoxCompact]}>
             <Image source={require('../assets/images/icon.png')} style={styles.logoImage} />
           </View>
-          <View>
-            <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-              NERV ERP
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-              {t('System Online')}
-            </Text>
-          </View>
+          {!isSideCollapsed && (
+            <View>
+              <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
+                NERV ERP
+              </Text>
+              <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
+                {t('System Online')}
+              </Text>
+            </View>
+          )}
         </View>
         {showToggle && (
           <TouchableRipple
@@ -84,7 +107,14 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
   );
 
   const renderNavigation = () => (
-    <View style={[styles.navigation, isStacked && styles.navigationStacked, isCompact && styles.navigationCompact]}>
+    <View
+      style={[
+        styles.navigation,
+        isStacked && styles.navigationStacked,
+        isCompact && styles.navigationCompact,
+        isSideCollapsed && styles.navigationCollapsed,
+      ]}
+    >
       {navigationModules.map((module) => {
         const isActive = activeModule === module.id;
         return (
@@ -102,24 +132,27 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
               isStacked && styles.navButtonStacked,
               isStacked && isCompact && styles.navButtonStackedCompact,
               isCompact && styles.navButtonCompact,
+              isSideCollapsed && styles.navButtonCollapsed,
             ]}
             rippleColor={`${colors.primaryPurple}22`}
           >
-            <View style={styles.navButtonContent}>
+            <View style={[styles.navButtonContent, isSideCollapsed && styles.navButtonContentCollapsed]}>
               <Feather
                 name={module.icon as any}
                 size={20}
                 color={isActive ? colors.neonGreen : colors.textSecondary}
               />
-              <Text
-                style={[
-                  styles.navButtonText,
-                  { color: isActive ? colors.neonGreen : colors.textSecondary },
-                  isCompact && styles.navButtonTextCompact,
-                ]}
-              >
-                {t(module.label)}
-              </Text>
+              {!isSideCollapsed && (
+                <Text
+                  style={[
+                    styles.navButtonText,
+                    { color: isActive ? colors.neonGreen : colors.textSecondary },
+                    isCompact && styles.navButtonTextCompact,
+                  ]}
+                >
+                  {t(module.label)}
+                </Text>
+              )}
             </View>
           </TouchableRipple>
         );
@@ -154,9 +187,11 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
       )}
 
       {/* Theme Toggle */}
-      <View style={[styles.themeSection, { borderColor: colors.cardBorder }, isCompact && styles.themeSectionCompact]}>
-        <ThemeToggle />
-      </View>
+      {!isSideCollapsed && (
+        <View style={[styles.themeSection, { borderColor: colors.cardBorder }, isCompact && styles.themeSectionCompact]}>
+          <ThemeToggle />
+        </View>
+      )}
 
       {/* Navigation */}
       {renderNavigation()}
@@ -176,25 +211,37 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
         isCompact && styles.footerCompact,
       ]}
     >
-      <TouchableRipple
-        style={[
-          styles.logoutButton,
-          isStacked && styles.logoutButtonStacked,
-          isCompact && styles.logoutButtonCompact,
-        ]}
-        onPress={logout}
-        rippleColor={`${colors.accentOrange}22`}
-        testID="sidebar-logout"
-      >
-        <View style={styles.logoutContent}>
-          <Feather name="log-out" size={16} color={colors.accentOrange} />
-          <Text style={[styles.logoutText, { color: colors.accentOrange }]}>{t('Logout')}</Text>
-        </View>
-      </TouchableRipple>
-      <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, position: 'relative' }]} />
-      <Text style={[styles.footerText, { color: colors.textMuted }]} numberOfLines={1}>
-        {t('System Status: Active')}
-      </Text>
+      {isSideCollapsed ? (
+        <IconButton
+          icon={() => <Feather name="log-out" size={16} color={colors.accentOrange} />}
+          size={18}
+          onPress={logout}
+          testID="sidebar-logout"
+          style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+        />
+      ) : (
+        <>
+          <TouchableRipple
+            style={[
+              styles.logoutButton,
+              isStacked && styles.logoutButtonStacked,
+              isCompact && styles.logoutButtonCompact,
+            ]}
+            onPress={logout}
+            rippleColor={`${colors.accentOrange}22`}
+            testID="sidebar-logout"
+          >
+            <View style={styles.logoutContent}>
+              <Feather name="log-out" size={16} color={colors.accentOrange} />
+              <Text style={[styles.logoutText, { color: colors.accentOrange }]}>{t('Logout')}</Text>
+            </View>
+          </TouchableRipple>
+          <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, position: 'relative' }]} />
+          <Text style={[styles.footerText, { color: colors.textMuted }]} numberOfLines={1}>
+            {t('System Status: Active')}
+          </Text>
+        </>
+      )}
     </View>
   );
 
@@ -290,10 +337,20 @@ export function Sidebar({ activeModule, setActiveModule, layout = 'side' }: Side
       elevation={0}
     >
       <ScrollView style={styles.scrollView} contentContainerStyle={isStacked ? styles.scrollContent : undefined}>
-        {renderHeader(false, 'menu', () => undefined)}
-        {renderMenuContent()}
+        {renderHeader(
+          true,
+          isStacked
+            ? isStackedCollapsed
+              ? 'chevrons-down'
+              : 'chevrons-up'
+            : isSideCollapsed
+              ? 'chevrons-right'
+              : 'chevrons-left',
+          onToggleCollapsed ?? (() => undefined),
+        )}
+        {!isStackedCollapsed && renderMenuContent()}
       </ScrollView>
-      {renderFooter()}
+      {!isStackedCollapsed && renderFooter()}
     </Surface>
   );
 }
@@ -327,10 +384,22 @@ const styles = StyleSheet.create({
   headerCompact: {
     padding: 16,
   },
+  headerCollapsed: {
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  headerRowCollapsed: {
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: 10,
+  },
   logoContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  logoContainerCollapsed: {
+    gap: 0,
   },
   topBarLogo: {
     flex: 1,
@@ -471,6 +540,11 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
+  navigationCollapsed: {
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
   navigationCompact: {
     padding: 12,
   },
@@ -490,11 +564,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minHeight: 48,
   },
+  navButtonCollapsed: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 0,
+    minHeight: 44,
+  },
   navButtonContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     width: '100%',
+  },
+  navButtonContentCollapsed: {
+    justifyContent: 'center',
+    gap: 0,
   },
   navButtonCompact: {
     paddingVertical: 10,

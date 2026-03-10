@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Modal,
   Platform,
   ScrollView,
@@ -12,7 +11,6 @@ import { Feather } from '@expo/vector-icons';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import {
   Button,
-  Card,
   Chip,
   HelperText,
   IconButton,
@@ -54,24 +52,32 @@ import {
   toIdKey,
   unitAllowsDecimal,
 } from '../utils/orders/helpers';
-import { formatUsDateTime } from '../utils/datetime';
+import { parseDateValue } from '../utils/datetime';
 import { hasManagementAccess } from '../utils/access';
 
-const orderStatusOptions = ['Pending', 'Processing', 'Shipped', 'Delivered'] as const;
+const orderStatusOptions = ['Pending', 'Processing', 'Paid', 'Shipped', 'Delivered', 'Finished'] as const;
 type OrderStatusOption = (typeof orderStatusOptions)[number];
 const statuses = ['all', ...orderStatusOptions];
 const UNKNOWN_CUSTOMER = 'Unknown customer';
 const LOADING_CUSTOMER = 'Loading customer...';
+const ORDER_OPTIONS_PAGE_SIZE = 100;
+const ORDER_OPTIONS_MAX_PAGES = 50;
 const orderStatusEnumValue: Record<OrderStatusOption, number> = {
   Pending: 0,
   Processing: 1,
-  Shipped: 2,
-  Delivered: 3,
+  Paid: 2,
+  Shipped: 3,
+  Delivered: 4,
+  Finished: 5,
 };
 const resolveStatusOption = (value?: string | null): OrderStatusOption => {
   const normalized = (value ?? '').trim().toLowerCase();
   const match = orderStatusOptions.find((status) => status.toLowerCase() === normalized);
   return match ?? 'Pending';
+};
+const shouldShowPaidAt = (status?: string | null) => {
+  const normalized = resolveStatusOption(status);
+  return normalized === 'Paid' || normalized === 'Finished';
 };
 const resolveItemsFromOrderedProducts = (order: OrderModel) => {
   if (!order.orderedProduct || order.orderedProduct.length === 0) {
@@ -92,12 +98,44 @@ type SelectedOrderItem = {
 
 export function Orders() {
   const { colors } = useTheme();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { client, token, isAuthenticated, loading: authLoading, enterpriseId, currency, user } = useAuth();
   const erpService = useMemo(() => new ErpService(client), [client]);
   const canManageOrders = hasManagementAccess(user?.role);
   const managementDeniedMessage = t('Only Admin, Manager, and Supervisor can edit or delete orders.');
-  const { isCompact, isTablet, contentPadding } = useResponsive();
+  const { width, isCompact, isTablet, contentPadding } = useResponsive();
+  const dateTimeLocale = useMemo(() => {
+    if (language === 'pt') {
+      return 'pt-BR';
+    }
+    if (language === 'es') {
+      return 'es-ES';
+    }
+    if (language === 'ja') {
+      return 'ja-JP';
+    }
+    return 'en-US';
+  }, [language]);
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(dateTimeLocale, {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: language === 'en',
+      }),
+    [dateTimeLocale, language],
+  );
+  const formatOrderDateTime = (value: string | number | Date | null | undefined, fallback = '--') => {
+    const parsed = parseDateValue(value);
+    if (!parsed) {
+      return fallback;
+    }
+    return dateTimeFormatter.format(parsed);
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [startDateFilter, setStartDateFilter] = useState<Date | null>(null);
@@ -112,6 +150,7 @@ export function Orders() {
   const [detailsCustomer, setDetailsCustomer] = useState<CustomerModel | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<OrderStatusOption | null>(null);
   const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
   const [confirmDeleteOrder, setConfirmDeleteOrder] = useState<OrderModel | null>(null);
   const [customerLookupLoading, setCustomerLookupLoading] = useState(false);
@@ -122,8 +161,11 @@ export function Orders() {
   const [pageNumber, setPageNumber] = useState(1);
   const [pageSize] = useState(25);
   const [hasMore, setHasMore] = useState(false);
+  const [contentWidth, setContentWidth] = useState(0);
   const [createVisible, setCreateVisible] = useState(false);
   const [orderDateLabel, setOrderDateLabel] = useState('');
+  const [paymentDatePickerVisible, setPaymentDatePickerVisible] = useState(false);
+  const [scheduledPaymentDate, setScheduledPaymentDate] = useState<Date | null>(null);
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState('');
@@ -132,6 +174,7 @@ export function Orders() {
   const [selectedItems, setSelectedItems] = useState<SelectedOrderItem[]>([]);
   const [customers, setCustomers] = useState<CustomerModel[]>([]);
   const [products, setProducts] = useState<ProductModel[]>([]);
+  const [customerOptionsEnterpriseId, setCustomerOptionsEnterpriseId] = useState<string | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [createStatus, setCreateStatus] = useState<OrderStatusOption>('Pending');
   const [creating, setCreating] = useState(false);
@@ -235,19 +278,22 @@ export function Orders() {
         return;
       }
       if (orderId) {
-        const nextStatus = resolveStatusOption(status);
-        setOrders((prev) =>
-          prev.map((order) =>
-            String(order.id) === String(orderId)
-              ? { ...order, status: nextStatus }
-              : order,
-          ),
-        );
-        setDetailsOrder((current) =>
-          current && String(current.id) === String(orderId)
-            ? { ...current, status: nextStatus }
-            : current,
-        );
+        const normalizedStatus = typeof status === 'string' ? status.trim().toLowerCase() : '';
+        const nextStatus = orderStatusOptions.find((entry) => entry.toLowerCase() === normalizedStatus);
+        if (nextStatus) {
+          setOrders((prev) =>
+            prev.map((order) =>
+              String(order.id) === String(orderId)
+                ? { ...order, status: nextStatus }
+                : order,
+            ),
+          );
+          setDetailsOrder((current) =>
+            current && String(current.id) === String(orderId)
+              ? { ...current, status: nextStatus }
+              : current,
+          );
+        }
       }
       setPageNumber(1);
       setRefreshKey((prev) => prev + 1);
@@ -280,21 +326,82 @@ export function Orders() {
   }, [isAuthenticated, authLoading, ordersHubUrl, orderEventNames, token]);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setCustomerOptionsEnterpriseId(null);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
     if (!createVisible || !isAuthenticated || authLoading) {
       return;
     }
 
     let active = true;
 
+    const loadAllCustomerOptions = async () => {
+      const allCustomers: CustomerModel[] = [];
+      const seenCustomers = new Set<string>();
+
+      for (let page = 1; page <= ORDER_OPTIONS_MAX_PAGES; page += 1) {
+        const response = await erpService.fetchCustomers(page, ORDER_OPTIONS_PAGE_SIZE, false, {
+          enterpriseId: enterpriseId ?? undefined,
+        });
+
+        if (!response.ok) {
+          if (allCustomers.length > 0) {
+            return { ok: false as const, data: allCustomers, error: response.error };
+          }
+          return { ok: false as const, data: null, error: response.error };
+        }
+
+        const rows = response.data ?? [];
+        if (rows.length === 0) {
+          break;
+        }
+
+        let addedRows = 0;
+        rows.forEach((customer, index) => {
+          const hasId =
+            customer.id !== undefined &&
+            customer.id !== null &&
+            String(customer.id).trim() !== '';
+          const emailKey =
+            typeof customer.email === 'string'
+              ? customer.email.trim().toLowerCase()
+              : '';
+          const key = hasId
+            ? `id:${toIdKey(customer.id as string | number)}`
+            : emailKey
+              ? `email:${emailKey}`
+              : `page:${page}:idx:${index}`;
+
+          if (seenCustomers.has(key)) {
+            return;
+          }
+
+          seenCustomers.add(key);
+          allCustomers.push(customer);
+          addedRows += 1;
+        });
+
+        // Backends that ignore page parameters can repeat rows forever; stop once a page adds nothing new.
+        if (addedRows === 0) {
+          break;
+        }
+      }
+
+      return { ok: true as const, data: allCustomers, error: undefined };
+    };
+
     const loadOptions = async () => {
       setOptionsLoading(true);
 
-      const shouldLoadCustomers = customers.length === 0;
+      const shouldLoadCustomers = customerOptionsEnterpriseId !== (enterpriseId ?? null);
       const shouldLoadProducts = products.length === 0;
 
       const [customersResponse, productsResponse] = await Promise.all([
         shouldLoadCustomers
-          ? erpService.fetchCustomers(1, 25)
+          ? loadAllCustomerOptions()
           : Promise.resolve({ ok: true, data: customers, error: undefined }),
         shouldLoadProducts
           ? erpService.fetchProducts(1, 25)
@@ -306,8 +413,12 @@ export function Orders() {
         return;
       }
 
-      if (customersResponse.ok && customersResponse.data && shouldLoadCustomers) {
+      if (customersResponse.data && shouldLoadCustomers) {
         setCustomers(customersResponse.data);
+      }
+
+      if (customersResponse.ok && shouldLoadCustomers) {
+        setCustomerOptionsEnterpriseId(enterpriseId ?? null);
       }
 
       if (productsResponse.ok && productsResponse.data && shouldLoadProducts) {
@@ -331,7 +442,7 @@ export function Orders() {
       active = false;
       setOptionsLoading(false);
     };
-  }, [createVisible, isAuthenticated, authLoading, erpService]);
+  }, [createVisible, isAuthenticated, authLoading, erpService, enterpriseId]);
 
   const goPrevPage = () => {
     setPageNumber((prev) => Math.max(1, prev - 1));
@@ -350,6 +461,24 @@ export function Orders() {
 
   const closeDatePicker = () => {
     setDatePickerVisible(false);
+  };
+
+  const openPaymentDatePicker = () => {
+    setErrorMessage(null);
+    setPaymentDatePickerVisible(true);
+  };
+
+  const closePaymentDatePicker = () => {
+    setPaymentDatePickerVisible(false);
+  };
+
+  const handlePaymentDateConfirm = ({ date }: { date: Date | undefined }) => {
+    setScheduledPaymentDate(date ?? null);
+    setPaymentDatePickerVisible(false);
+  };
+
+  const clearScheduledPaymentDate = () => {
+    setScheduledPaymentDate(null);
   };
 
   const handleDateConfirm = ({
@@ -594,6 +723,18 @@ export function Orders() {
     return raw;
   };
 
+  const resolveOrderDateSource = (order: OrderModel) => {
+    return order.date ?? order.createdAt ?? null;
+  };
+
+  const resolveOrderScheduledPaymentDateSource = (order: OrderModel) => {
+    return order.paymentScheduledDate ?? null;
+  };
+
+  const resolveOrderPaydaySource = (order: OrderModel) => {
+    return order.payday ?? order.paymentDate ?? null;
+  };
+
   useEffect(() => {
     if (!detailsVisible || !detailsOrder?.id) {
       orderDetailsRequestRef.current = null;
@@ -673,13 +814,15 @@ export function Orders() {
       return;
     }
     setErrorMessage(null);
-    setOrderDateLabel(formatUsDateTime(new Date()));
+    setOrderDateLabel(formatOrderDateTime(new Date()));
     setCustomerDropdownOpen(false);
     setProductDropdownOpen(false);
     setCustomerSearch('');
     setSelectedCustomer(null);
     setProductSearch('');
     setSelectedItems([]);
+    setPaymentDatePickerVisible(false);
+    setScheduledPaymentDate(null);
     setCreateStatus('Pending');
     setCreateVisible(true);
   };
@@ -693,6 +836,8 @@ export function Orders() {
     setSelectedCustomer(null);
     setProductSearch('');
     setSelectedItems([]);
+    setPaymentDatePickerVisible(false);
+    setScheduledPaymentDate(null);
     setCreateStatus('Pending');
     setCreating(false);
   };
@@ -700,6 +845,7 @@ export function Orders() {
   const openDetails = (order: OrderModel) => {
     orderDetailsRequestRef.current = null;
     setStatusUpdating(false);
+    setPendingStatusChange(null);
     setDetailsOrder(order);
     setDetailsLoading(true);
     setDetailsVisible(true);
@@ -712,6 +858,7 @@ export function Orders() {
     setDetailsCustomer(null);
     setDetailsLoading(false);
     setStatusUpdating(false);
+    setPendingStatusChange(null);
   };
 
   const closeDeleteConfirm = () => {
@@ -951,7 +1098,14 @@ export function Orders() {
 
     const now = new Date();
     const dateValue = now.toISOString();
-    setOrderDateLabel(formatUsDateTime(now));
+    const normalizedScheduledPaymentDate = scheduledPaymentDate
+      ? (() => {
+          const value = new Date(scheduledPaymentDate);
+          value.setHours(12, 0, 0, 0);
+          return value.toISOString();
+        })()
+      : null;
+    setOrderDateLabel(formatOrderDateTime(now));
 
     setCreating(true);
     setErrorMessage(null);
@@ -963,8 +1117,13 @@ export function Orders() {
       totalValue,
       status: orderStatusEnumValue[createStatus],
       items: totalItems,
+      payday: null,
+      paymentScheduledDate: normalizedScheduledPaymentDate,
+      PaymentScheduledDate: normalizedScheduledPaymentDate,
       customerId: selectedCustomer?.id,
       enterpriseId: enterpriseId ?? undefined,
+      paymentDate: null,
+      PaymentDate: null,
       orderedProduct: orderLineItems,
     };
 
@@ -975,6 +1134,9 @@ export function Orders() {
         customer,
         customerId: selectedCustomer?.id,
         date: dateValue,
+        payday: null,
+        paymentScheduledDate: normalizedScheduledPaymentDate,
+        paymentDate: null,
         createdAt: dateValue,
         total: totalValue,
         totalValue,
@@ -994,6 +1156,42 @@ export function Orders() {
     }
 
     setCreating(false);
+  };
+
+  const requestStatusChange = (nextStatus: OrderStatusOption) => {
+    if (statusUpdating || !detailsOrder || detailsOrder.id === undefined || detailsOrder.id === null) {
+      return;
+    }
+
+    const currentStatus = resolveStatusOption(detailsOrder.status);
+    if (currentStatus === nextStatus) {
+      return;
+    }
+
+    if (!isAuthenticated || authLoading) {
+      setErrorMessage(t('Authenticate to manage orders.'));
+      return;
+    }
+    if (!canManageOrders) {
+      setErrorMessage(managementDeniedMessage);
+      return;
+    }
+
+    setPendingStatusChange(nextStatus);
+  };
+
+  const cancelPendingStatusChange = () => {
+    setPendingStatusChange(null);
+  };
+
+  const confirmStatusChange = async () => {
+    if (!pendingStatusChange) {
+      return;
+    }
+
+    const nextStatus = pendingStatusChange;
+    setPendingStatusChange(null);
+    await handleManualStatusChange(nextStatus);
   };
 
   const handleManualStatusChange = async (nextStatus: OrderStatusOption) => {
@@ -1043,8 +1241,10 @@ export function Orders() {
       }
 
       const updatedAt = new Date().toISOString();
+      const nextPayday = nextStatus === 'Paid' ? updatedAt : sourceOrder.payday ?? null;
       const safeCustomer = resolveOrderCustomerNameRaw(sourceOrder) || UNKNOWN_CUSTOMER;
       const safeDate = sourceOrder.date ?? sourceOrder.createdAt ?? new Date().toISOString();
+      const safeScheduledPaymentDate = sourceOrder.paymentScheduledDate ?? null;
       const safeTotal =
         typeof sourceOrder.total === 'number'
           ? sourceOrder.total
@@ -1067,8 +1267,11 @@ export function Orders() {
         orderedProduct: safeOrderedProduct,
         isActive: sourceOrder.isActive ?? true,
         enterpriseId: enterpriseId ?? undefined,
-        payday: safeDate,
-        paymentScheduledDate: safeDate,
+        payday: nextPayday,
+        paymentScheduledDate: safeScheduledPaymentDate,
+        PaymentScheduledDate: safeScheduledPaymentDate,
+        paymentDate: null,
+        PaymentDate: null,
       };
 
       const response = await erpService.updateOrder(payload);
@@ -1079,6 +1282,7 @@ export function Orders() {
                 ...current,
                 updatedAt,
                 status: nextStatus,
+                payday: nextPayday,
               }
             : current,
         );
@@ -1089,6 +1293,7 @@ export function Orders() {
                   ...order,
                   updatedAt,
                   status: nextStatus,
+                  payday: nextPayday,
                 }
               : order,
           ),
@@ -1159,7 +1364,7 @@ export function Orders() {
     const matchesStatus =
       filterStatus === 'all' || statusValue === filterStatus.toLowerCase();
 
-    const orderDate = parseOrderDateValue(order.date ?? order.createdAt ?? null);
+    const orderDate = parseOrderDateValue(resolveOrderDateSource(order));
     const hasValidOrderDate = Boolean(orderDate);
     const startBoundary = startDateFilter ? new Date(startDateFilter) : null;
     const endBoundary = endDateFilter ? new Date(endDateFilter) : null;
@@ -1189,10 +1394,14 @@ export function Orders() {
         return colors.accentOrange;
       case 'Processing':
         return colors.primaryPurple;
+      case 'Paid':
+        return '#1ec28b';
       case 'Shipped':
         return '#4a9eff';
       case 'Delivered':
         return colors.neonGreen;
+      case 'Finished':
+        return '#9aa4ff';
       default:
         return colors.textMuted;
     }
@@ -1201,6 +1410,7 @@ export function Orders() {
   if (loading) {
     return (
       <NervLoader
+        variant="orders"
         fullScreen
         label={t('Synchronizing EVA-01')}
         subtitle={t('LCL circulation nominal | Loading orders...')}
@@ -1208,10 +1418,24 @@ export function Orders() {
     );
   }
 
+  const effectiveWidth = contentWidth > 0 ? contentWidth : width;
+  const useCardLayout = effectiveWidth < 980;
+  const useDenseMobileLayout = effectiveWidth < 420;
+  const orderTableMinWidth = effectiveWidth < 1280 ? 980 : 1080;
+  const rowActionIconSize = useCardLayout ? (useDenseMobileLayout ? 22 : 24) : 16;
+
   return (
     <>
       <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
-        <View style={[styles.content, { padding: contentPadding }]}>
+        <View
+          style={[styles.content, { padding: contentPadding, backgroundColor: colors.appBg }]}
+          onLayout={(event) => {
+            const nextWidth = Math.round(event.nativeEvent.layout.width);
+            if (nextWidth > 0 && nextWidth !== contentWidth) {
+              setContentWidth(nextWidth);
+            }
+          }}
+        >
           {/* Header */}
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
@@ -1313,6 +1537,7 @@ export function Orders() {
                     textColor={colors.appBg}
                     style={styles.dateFilterActionPrimary}
                     contentStyle={styles.dateFilterActionContent}
+                    labelStyle={styles.compactControlLabel}
                   >
                     {t('Pick range')}
                   </Button>
@@ -1323,6 +1548,7 @@ export function Orders() {
                       textColor={colors.textSecondary}
                       style={[styles.dateFilterActionGhost, { borderColor: colors.cardBorder }]}
                       contentStyle={styles.dateFilterActionContent}
+                      labelStyle={styles.compactControlLabel}
                     >
                       {t('Clear')}
                     </Button>
@@ -1337,7 +1563,7 @@ export function Orders() {
                 placeholder={t('Search orders...')}
                 value={searchTerm}
                 onChangeText={setSearchTerm}
-                style={[styles.searchBar, { backgroundColor: colors.inputBgFrom }]}
+                style={[styles.searchBar, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
                 iconColor={colors.primaryPurple}
                 inputStyle={[styles.searchInput, { color: colors.textPrimary }]}
                 placeholderTextColor={colors.textMuted}
@@ -1355,7 +1581,7 @@ export function Orders() {
                   (!isAuthenticated || authLoading) && styles.buttonDisabled,
                 ]}
                 contentStyle={[styles.addButtonContent, isCompact && styles.addButtonContentCompact]}
-                labelStyle={styles.addButtonLabel}
+                labelStyle={[styles.addButtonLabel, styles.compactControlLabel]}
               >
                 {t('Add')}
               </Button>
@@ -1373,6 +1599,8 @@ export function Orders() {
                   { borderColor: colors.cardBorder },
                   pageNumber === 1 && styles.paginationButtonDisabled,
                 ]}
+                contentStyle={styles.paginationButtonContent}
+                labelStyle={styles.compactControlLabel}
               >
                 {t('Prev')}
               </Button>
@@ -1389,119 +1617,361 @@ export function Orders() {
                   !hasMore && styles.paginationButtonDisabled,
                 ]}
                 contentStyle={styles.paginationButtonContent}
+                labelStyle={styles.compactControlLabel}
               >
                 {t('Next')}
               </Button>
             </View>
 
           {/* Order List */}
-          <View style={styles.orderList}>
-          {filteredOrders.map((order) => {
-            const safeId = order.id ?? '-';
-            const safeStatus = resolveStatusOption(order.status);
-            const safeCustomer = resolveOrderCustomerName(order);
-            const safeDate = formatUsDateTime(order.date ?? order.createdAt ?? null);
-            const safeItems = resolveOrderItems(order);
-            const safeTotal =
-              typeof order.totalValue === 'number'
-                ? order.totalValue
-                : typeof order.total === 'number'
-                  ? order.total
-                  : 0;
-            const isDeleting = deletingId === order.id;
+          {useCardLayout ? (
+            <View style={styles.orderList}>
+              {filteredOrders.map((order) => {
+                const safeId = order.id ?? '-';
+                const safeStatus = resolveStatusOption(order.status);
+                const safeCustomer = resolveOrderCustomerName(order);
+                const safeDate = formatOrderDateTime(resolveOrderDateSource(order));
+                const safeScheduledPaymentDate = resolveOrderScheduledPaymentDateSource(order);
+                const safePayday = resolveOrderPaydaySource(order);
+                const showPaidAt = shouldShowPaidAt(safeStatus);
+                const safeItems = resolveOrderItems(order);
+                const safeTotal =
+                  typeof order.totalValue === 'number'
+                    ? order.totalValue
+                    : typeof order.total === 'number'
+                      ? order.total
+                      : 0;
+                const isDeleting = deletingId === order.id;
 
-            return (
-                <Card
-                  key={safeId}
-                  mode="outlined"
-                  style={[styles.orderCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-                >
-                  <Card.Content style={styles.orderCardContent}>
-                    <View style={[styles.orderHeader, isCompact && styles.orderHeaderCompact]}>
-                      <View style={styles.orderIdContainer}>
-                        <Text style={[styles.orderLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
-                        <Text style={[styles.orderId, { color: colors.neonGreen }]}>#{safeId}</Text>
+                return (
+                  <View
+                    key={safeId}
+                    style={[
+                      styles.orderMobileCard,
+                      useDenseMobileLayout && styles.orderMobileCardDense,
+                      { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+                    ]}
+                  >
+                    <View style={styles.orderMobileHeader}>
+                      <View style={styles.orderMobileHeaderTop}>
+                        <View style={styles.orderMobileIdBlock}>
+                          <Text style={[styles.orderLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
+                          <Text
+                            style={[
+                              styles.orderId,
+                              styles.orderIdMobile,
+                              useDenseMobileLayout && styles.orderIdMobileDense,
+                              { color: colors.neonGreen },
+                            ]}
+                          >
+                            #{safeId}
+                          </Text>
+                        </View>
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            styles.statusBadgeCompact,
+                            { backgroundColor: `${getStatusColor(safeStatus)}18` },
+                          ]}
+                        >
+                          <Text style={[styles.statusText, styles.statusTextCompact, { color: getStatusColor(safeStatus) }]}>
+                            {t(safeStatus)}
+                          </Text>
+                        </View>
                       </View>
+                    </View>
+
+                    <View style={[styles.orderMobileSections, useDenseMobileLayout && styles.orderMobileSectionsDense]}>
+                      <View style={styles.orderMobileSection}>
+                        <View style={styles.tableMetaRow}>
+                          <View style={[styles.tableIconBadge, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                            <Feather name="user" size={14} color={colors.primaryPurple} />
+                          </View>
+                          <View style={styles.tableMetaContent}>
+                            <Text style={[styles.tableMetaTitle, { color: colors.textPrimary }]}>{safeCustomer}</Text>
+                            <Text style={[styles.tableMetaSubtitle, { color: colors.textMuted }]}>{t('Customer')}</Text>
+                          </View>
+                        </View>
+                      </View>
+
                       <View
                         style={[
-                          styles.statusBadge,
-                          isCompact && styles.statusBadgeCompact,
-                          { backgroundColor: `${getStatusColor(safeStatus)}20` },
+                          styles.orderMobileSection,
+                          styles.orderMobileTimelineSection,
+                          { borderTopColor: colors.cardBorder },
                         ]}
                       >
-                        <Text
+                        <Text style={[styles.orderMobileSectionLabel, { color: colors.textMuted }]}>{t('Timeline')}</Text>
+                        <View style={styles.orderTimeline}>
+                          <View style={styles.timelineRow}>
+                            <Feather name="calendar" size={14} color={colors.primaryPurple} />
+                            <Text style={[styles.timelineText, { color: colors.textSecondary }]}>{safeDate}</Text>
+                          </View>
+                          <View style={styles.timelineRow}>
+                            <Feather name="clock" size={14} color={colors.primaryPurple} />
+                            <Text style={[styles.timelineText, { color: colors.textSecondary }]}>
+                              {safeScheduledPaymentDate
+                                ? t('Pay on {date}', { date: formatOrderDateTime(safeScheduledPaymentDate) })
+                                : t('Payment not scheduled')}
+                            </Text>
+                          </View>
+                          {showPaidAt && (
+                            <View style={styles.timelineRow}>
+                              <Feather name="check-circle" size={14} color={colors.neonGreen} />
+                              <Text style={[styles.timelineText, { color: colors.textSecondary }]}>
+                                {t('Paid at')}: {safePayday ? formatOrderDateTime(safePayday) : '-'}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      <View style={[styles.orderMobileMetrics, useDenseMobileLayout && styles.orderMobileMetricsDense]}>
+                        <View
                           style={[
-                            styles.statusText,
-                            isCompact && styles.statusTextCompact,
-                            { color: getStatusColor(safeStatus) },
+                            styles.orderMobileMetricCard,
+                            useDenseMobileLayout && styles.orderMobileMetricCardDense,
+                            { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
                           ]}
                         >
-                          {t(safeStatus)}
-                        </Text>
-                      </View>
-                    </View>
+                          <Text style={[styles.orderMobileSectionLabel, { color: colors.textMuted }]}>{t('Items')}</Text>
+                          <View style={[styles.metricPill, { backgroundColor: `${colors.textMuted}12` }]}>
+                            <Feather name="package" size={14} color={colors.textMuted} />
+                            <Text style={[styles.metricPillText, { color: colors.textSecondary }]}>
+                              {t('{count} items', { count: safeItems })}
+                            </Text>
+                          </View>
+                        </View>
 
-                    <View style={styles.orderDetails}>
-                      <View style={styles.detailRow}>
-                        <Feather name="user" size={16} color={colors.primaryPurple} />
-                        <Text style={[styles.detailText, { color: colors.textSecondary }]}>{safeCustomer}</Text>
-                      </View>
-                      <View style={styles.detailRow}>
-                        <Feather name="calendar" size={16} color={colors.primaryPurple} />
-                        <Text style={[styles.detailText, { color: colors.textSecondary }]}>{safeDate}</Text>
-                      </View>
-                    </View>
-
-                    <View style={[styles.orderFooter, isCompact && styles.orderFooterCompact]}>
-                      <View style={styles.detailRow}>
-                        <Feather name="package" size={16} color={colors.textMuted} />
-                        <Text style={[styles.detailText, { color: colors.textMuted }]}>{t('{count} items', { count: safeItems })}</Text>
-                      </View>
-                      <Text style={[styles.orderTotal, { color: colors.textPrimary }]}>
-                        {formatCurrency(safeTotal, currency)}
-                      </Text>
-                    </View>
-
-                    <View style={[styles.cardActions, isCompact && styles.cardActionsCompact]}>
-                      <Button
-                        mode="contained"
-                        onPress={() => openDetails(order)}
-                        disabled={isDeleting}
-                        icon={({ size }) => <Feather name="eye" size={size} color={colors.neonGreen} />}
-                        buttonColor={colors.primaryPurple}
-                        textColor={colors.appBg}
-                        testID={`order-view-${safeId}`}
-                        style={styles.actionButton}
-                        contentStyle={styles.actionButtonContent}
-                      >
-                        {t('View Details')}
-                      </Button>
-                      {canManageOrders && (
-                        <Button
-                          mode="outlined"
-                          onPress={() => requestDelete(order)}
-                          disabled={isDeleting}
-                          icon={({ size }) => <Feather name="trash-2" size={size} color={colors.accentOrange} />}
-                          textColor={colors.accentOrange}
-                          testID={`order-delete-${safeId}`}
+                        <View
                           style={[
-                            styles.actionButton,
-                            styles.deleteButton,
-                            { borderColor: colors.cardBorder },
+                            styles.orderMobileMetricCard,
+                            useDenseMobileLayout && styles.orderMobileMetricCardDense,
+                            { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+                          ]}
+                        >
+                          <Text style={[styles.orderMobileSectionLabel, { color: colors.textMuted }]}>{t('Amount')}</Text>
+                          <Text style={[styles.orderTotal, styles.orderTotalMobile, { color: colors.textPrimary }]}>
+                            {formatCurrency(safeTotal, currency)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.actionIconRow}>
+                        <IconButton
+                          icon={() => <Feather name="eye" size={rowActionIconSize} color={colors.textPrimary} />}
+                          size={rowActionIconSize}
+                          onPress={() => openDetails(order)}
+                          disabled={isDeleting}
+                          testID={`order-view-${safeId}`}
+                          style={[
+                            styles.actionIconButton,
+                            styles.actionIconButtonMobile,
+                            useDenseMobileLayout && styles.actionIconButtonCompact,
+                            { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom },
                             isDeleting && styles.actionButtonDisabled,
                           ]}
-                          contentStyle={styles.actionButtonContent}
-                        >
-                          {isDeleting ? t('Deleting...') : t('Delete')}
-                        </Button>
-                      )}
+                          accessibilityLabel={t('View Details')}
+                        />
+                        {canManageOrders && (
+                          <IconButton
+                            icon={() => <Feather name="trash-2" size={rowActionIconSize} color={colors.accentOrange} />}
+                            size={rowActionIconSize}
+                            onPress={() => requestDelete(order)}
+                            disabled={isDeleting}
+                            testID={`order-delete-${safeId}`}
+                            style={[
+                              styles.actionIconButton,
+                              styles.actionIconButtonMobile,
+                              useDenseMobileLayout && styles.actionIconButtonCompact,
+                              { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom },
+                              isDeleting && styles.actionButtonDisabled,
+                            ]}
+                            accessibilityLabel={isDeleting ? t('Deleting...') : t('Delete')}
+                          />
+                        )}
+                      </View>
                     </View>
-                  </Card.Content>
-                </Card>
-            );
-          })}
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.orderTableShell,
+                { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+              ]}
+            >
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.orderTableScrollContent}>
+                <View style={[styles.orderTable, { minWidth: orderTableMinWidth }]}>
+                <View
+                  style={[
+                    styles.orderTableHeader,
+                    { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+                  ]}
+                >
+                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableOrderColumn]}>
+                    {t('Order')}
+                  </Text>
+                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableCustomerColumn]}>
+                    {t('Customer')}
+                  </Text>
+                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableTimelineColumn]}>
+                    {t('Timeline')}
+                  </Text>
+                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableItemsColumn]}>
+                    {t('Items')}
+                  </Text>
+                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableTotalColumn]}>
+                    {t('Total')}
+                  </Text>
+                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableActionsColumn]}>
+                    {t('Actions')}
+                  </Text>
+                </View>
+
+                <View style={styles.orderList}>
+                  {filteredOrders.map((order) => {
+                    const safeId = order.id ?? '-';
+                    const safeStatus = resolveStatusOption(order.status);
+                    const safeCustomer = resolveOrderCustomerName(order);
+                    const safeDate = formatOrderDateTime(resolveOrderDateSource(order));
+                    const safeScheduledPaymentDate = resolveOrderScheduledPaymentDateSource(order);
+                    const safePayday = resolveOrderPaydaySource(order);
+                    const showPaidAt = shouldShowPaidAt(safeStatus);
+                    const safeItems = resolveOrderItems(order);
+                    const safeTotal =
+                      typeof order.totalValue === 'number'
+                        ? order.totalValue
+                        : typeof order.total === 'number'
+                          ? order.total
+                          : 0;
+                    const isDeleting = deletingId === order.id;
+
+                    return (
+                      <View
+                        key={safeId}
+                        style={[
+                          styles.orderTableRow,
+                          { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+                        ]}
+                      >
+                        <View style={[styles.orderTableCell, styles.orderTableOrderColumn]}>
+                          <Text style={[styles.orderLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
+                          <Text style={[styles.orderId, { color: colors.neonGreen }]}>#{safeId}</Text>
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              { backgroundColor: `${getStatusColor(safeStatus)}18` },
+                            ]}
+                          >
+                            <Text style={[styles.statusText, { color: getStatusColor(safeStatus) }]}>
+                              {t(safeStatus)}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={[styles.orderTableCell, styles.orderTableCustomerColumn]}>
+                          <View style={styles.tableMetaRow}>
+                            <View style={[styles.tableIconBadge, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                              <Feather name="user" size={14} color={colors.primaryPurple} />
+                            </View>
+                            <View style={styles.tableMetaContent}>
+                              <Text style={[styles.tableMetaTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                                {safeCustomer}
+                              </Text>
+                              <Text style={[styles.tableMetaSubtitle, { color: colors.textMuted }]}>
+                                {t('Customer')}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+
+                        <View style={[styles.orderTableCell, styles.orderTableTimelineColumn]}>
+                          <View style={styles.orderTimeline}>
+                            <View style={styles.timelineRow}>
+                              <Feather name="calendar" size={14} color={colors.primaryPurple} />
+                              <Text style={[styles.timelineText, { color: colors.textSecondary }]} numberOfLines={1}>
+                                {safeDate}
+                              </Text>
+                            </View>
+                            <View style={styles.timelineRow}>
+                              <Feather name="clock" size={14} color={colors.primaryPurple} />
+                              <Text style={[styles.timelineText, { color: colors.textSecondary }]} numberOfLines={1}>
+                                {safeScheduledPaymentDate
+                                  ? t('Pay on {date}', { date: formatOrderDateTime(safeScheduledPaymentDate) })
+                                  : t('Payment not scheduled')}
+                              </Text>
+                            </View>
+                            {showPaidAt && (
+                              <View style={styles.timelineRow}>
+                                <Feather name="check-circle" size={14} color={colors.neonGreen} />
+                                <Text style={[styles.timelineText, { color: colors.textSecondary }]} numberOfLines={1}>
+                                  {t('Paid at')}: {safePayday ? formatOrderDateTime(safePayday) : '-'}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+
+                        <View style={[styles.orderTableCell, styles.orderTableItemsColumn]}>
+                          <View style={[styles.metricPill, { backgroundColor: `${colors.textMuted}12` }]}>
+                            <Feather name="package" size={14} color={colors.textMuted} />
+                            <Text style={[styles.metricPillText, { color: colors.textSecondary }]}>
+                              {t('{count} items', { count: safeItems })}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={[styles.orderTableCell, styles.orderTableTotalColumn]}>
+                          <Text style={[styles.orderTotalLabel, { color: colors.textMuted }]}>{t('Amount')}</Text>
+                          <Text style={[styles.orderTotal, { color: colors.textPrimary }]}>
+                            {formatCurrency(safeTotal, currency)}
+                          </Text>
+                        </View>
+
+                        <View style={[styles.orderTableCell, styles.orderTableActionsColumn]}>
+                          <View style={styles.actionIconRow}>
+                            <IconButton
+                              icon={() => <Feather name="eye" size={rowActionIconSize} color={colors.textPrimary} />}
+                              size={rowActionIconSize}
+                              onPress={() => openDetails(order)}
+                              disabled={isDeleting}
+                              testID={`order-view-${safeId}`}
+                              style={[
+                                styles.actionIconButton,
+                                { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom },
+                                isDeleting && styles.actionButtonDisabled,
+                              ]}
+                              accessibilityLabel={t('View Details')}
+                            />
+                            {canManageOrders && (
+                              <IconButton
+                                icon={() => <Feather name="trash-2" size={rowActionIconSize} color={colors.accentOrange} />}
+                                size={rowActionIconSize}
+                                onPress={() => requestDelete(order)}
+                                disabled={isDeleting}
+                                testID={`order-delete-${safeId}`}
+                                style={[
+                                  styles.actionIconButton,
+                                  { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom },
+                                  isDeleting && styles.actionButtonDisabled,
+                                ]}
+                                accessibilityLabel={isDeleting ? t('Deleting...') : t('Delete')}
+                              />
+                            )}
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+                </View>
+              </ScrollView>
+            </View>
+          )}
         </View>
-      </View>
       </ScrollView>
 
       <DatePickerModal
@@ -1737,10 +2207,46 @@ export function Orders() {
                 <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Order date')}</Text>
                 <View style={[styles.metaRow, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
                   <Text style={[styles.metaValue, { color: colors.textPrimary }]}>
-                    {orderDateLabel || formatUsDateTime(new Date())}
+                    {orderDateLabel || formatOrderDateTime(new Date())}
                   </Text>
                   <Text style={[styles.metaHint, { color: colors.textMuted }]}>{t('Auto-set')}</Text>
                 </View>
+              </View>
+
+              <View style={styles.modalField}>
+                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Payment scheduled')}</Text>
+                <View style={[styles.metaRow, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
+                  <Text
+                    style={[
+                      styles.metaValue,
+                      { color: scheduledPaymentDate ? colors.textPrimary : colors.textMuted },
+                    ]}
+                  >
+                    {scheduledPaymentDate ? formatDateLabel(scheduledPaymentDate) : t('Not scheduled')}
+                  </Text>
+                  <Button
+                    mode="outlined"
+                    onPress={openPaymentDatePicker}
+                    disabled={creating}
+                    textColor={colors.textSecondary}
+                    style={[styles.clearButton, { borderColor: colors.cardBorder }]}
+                    contentStyle={styles.clearButtonContent}
+                  >
+                    {scheduledPaymentDate ? t('Change') : t('Pick date')}
+                  </Button>
+                </View>
+                {scheduledPaymentDate && (
+                  <Button
+                    mode="outlined"
+                    onPress={clearScheduledPaymentDate}
+                    disabled={creating}
+                    textColor={colors.textSecondary}
+                    style={[styles.clearButton, { borderColor: colors.cardBorder }]}
+                    contentStyle={styles.clearButtonContent}
+                  >
+                    {t('Clear')}
+                  </Button>
+                )}
               </View>
 
               <View style={styles.modalField}>
@@ -2058,9 +2564,27 @@ export function Orders() {
                   <View style={styles.detailsRow}>
                     <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Date')}</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {formatUsDateTime(detailsOrder.createdAt ?? detailsOrder.date ?? null)}
+                      {formatOrderDateTime(resolveOrderDateSource(detailsOrder))}
                     </Text>
                   </View>
+                  <View style={styles.detailsRow}>
+                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Payment scheduled')}</Text>
+                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                      {resolveOrderScheduledPaymentDateSource(detailsOrder)
+                        ? formatOrderDateTime(resolveOrderScheduledPaymentDateSource(detailsOrder))
+                        : t('Not scheduled')}
+                    </Text>
+                  </View>
+                  {shouldShowPaidAt(detailsOrder.status) && (
+                    <View style={styles.detailsRow}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Paid at')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {resolveOrderPaydaySource(detailsOrder)
+                          ? formatOrderDateTime(resolveOrderPaydaySource(detailsOrder))
+                          : '-'}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.detailsRow}>
                     <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Items')}</Text>
                     <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
@@ -2093,8 +2617,48 @@ export function Orders() {
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('Manual Status')}</Text>
                     {renderStatusOptions(
                       resolveStatusOption(detailsOrder.status),
-                      handleManualStatusChange,
+                      requestStatusChange,
                       statusUpdating || deletingId === detailsOrder.id,
+                    )}
+                    {pendingStatusChange && (
+                      <View
+                        style={[
+                          styles.statusConfirmCard,
+                          { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom },
+                        ]}
+                      >
+                        <Text style={[styles.confirmText, { color: colors.textSecondary }]}>
+                          {t('Change status from {from} to {to}?', {
+                            from: t(resolveStatusOption(detailsOrder.status)),
+                            to: t(pendingStatusChange),
+                          })}
+                        </Text>
+                        <View style={[styles.modalActions, isCompact && styles.modalActionsCompact]}>
+                          <Button
+                            mode="outlined"
+                            onPress={cancelPendingStatusChange}
+                            disabled={statusUpdating}
+                            textColor={colors.textSecondary}
+                            style={[styles.modalButton, { borderColor: colors.cardBorder }]}
+                            contentStyle={styles.modalButtonContent}
+                            labelStyle={styles.modalButtonLabel}
+                          >
+                            {t('Cancel')}
+                          </Button>
+                          <Button
+                            mode="contained"
+                            onPress={confirmStatusChange}
+                            disabled={statusUpdating}
+                            buttonColor={colors.primaryPurple}
+                            textColor={colors.appBg}
+                            style={[styles.modalButton, statusUpdating && styles.actionButtonDisabled]}
+                            contentStyle={styles.modalButtonContent}
+                            labelStyle={styles.modalButtonLabel}
+                          >
+                            {t('Confirm')}
+                          </Button>
+                        </View>
+                      </View>
                     )}
                     {statusUpdating && (
                       <Text style={[styles.statusUpdateHint, { color: colors.textMuted }]}>
@@ -2197,6 +2761,18 @@ export function Orders() {
           </View>
         </View>
       </Modal>
+
+      <DatePickerModal
+        locale="en-US"
+        mode="single"
+        visible={paymentDatePickerVisible}
+        onDismiss={closePaymentDatePicker}
+        date={scheduledPaymentDate ?? undefined}
+        saveLabel={t('Apply')}
+        label={t('Payment scheduled')}
+        presentationStyle="overFullScreen"
+        onConfirm={({ date }) => handlePaymentDateConfirm({ date })}
+      />
     </>
   );
 }
@@ -2206,35 +2782,44 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
-    height: 4,
-    width: 100,
-    borderRadius: 2,
+    height: 6,
+    width: 132,
+    borderRadius: 999,
   },
   banner: {
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -2243,11 +2828,11 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   emptyTitle: {
     fontSize: 14,
@@ -2301,12 +2886,13 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   dateFilterActionPrimary: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 999,
   },
   dateFilterActionContent: {
-    paddingVertical: 2,
+    minHeight: 36,
+    paddingVertical: 0,
   },
   dateFilterActionText: {
     fontSize: 12,
@@ -2315,8 +2901,8 @@ const styles = StyleSheet.create({
   dateFilterActionGhost: {
     borderWidth: 1.5,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   dateFilterGhostText: {
     fontSize: 12,
@@ -2356,11 +2942,12 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   paginationButton: {
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: 9,
+    borderWidth: 1.5,
   },
   paginationButtonContent: {
-    paddingVertical: 4,
+    minHeight: 32,
+    paddingVertical: 0,
   },
   paginationButtonDisabled: {
     opacity: 0.5,
@@ -2372,80 +2959,196 @@ const styles = StyleSheet.create({
   searchBar: {
     flex: 1,
     borderRadius: 12,
-    minHeight: 48,
+    minHeight: 40,
+    borderWidth: 1,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 12,
   },
   addButton: {
-    borderRadius: 8,
-    minHeight: 48,
+    borderRadius: 10,
+    minHeight: 38,
   },
   addButtonContent: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   addButtonContentCompact: {
-    paddingVertical: 6,
+    paddingVertical: 1,
   },
   addButtonLabel: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
   },
   addButtonCompact: {
     width: '100%',
-    minHeight: 44,
-    borderRadius: 10,
+    minHeight: 36,
+    borderRadius: 9,
+  },
+  compactControlLabel: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   orderList: {
-    gap: 16,
+    gap: 12,
   },
-  orderCard: {
-    borderRadius: 8,
+  orderMobileCard: {
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 16,
+    gap: 14,
     shadowColor: '#000',
     shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
-  orderCardContent: {
-    padding: 16,
+  orderMobileCardDense: {
+    borderRadius: 18,
+    padding: 12,
+    gap: 10,
   },
-  orderHeader: {
+  orderMobileHeader: {
+    gap: 10,
+  },
+  orderMobileHeaderTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  orderHeaderCompact: {
-    flexDirection: 'column',
     alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  orderMobileIdBlock: {
+    flex: 1,
+  },
+  orderMobileSections: {
+    gap: 12,
+  },
+  orderMobileSectionsDense: {
+    gap: 10,
+  },
+  orderMobileSection: {
+    gap: 10,
+  },
+  orderMobileTimelineSection: {
+    borderTopWidth: 1,
+    paddingTop: 12,
+  },
+  orderMobileSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  orderMobileMetrics: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  orderMobileMetricsDense: {
     gap: 8,
   },
-  orderIdContainer: {
+  orderMobileMetricCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 12,
+    gap: 10,
+    flex: 1,
+    minWidth: 140,
+  },
+  orderMobileMetricCardDense: {
+    borderRadius: 14,
+    padding: 10,
+    minWidth: 120,
+  },
+  orderTableShell: {
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 14,
+    marginTop: 4,
+  },
+  orderTableScrollContent: {
+    minWidth: '100%',
+  },
+  orderTable: {
+    gap: 12,
+  },
+  orderTableHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  orderTableHeadText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  orderTableRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderWidth: 1,
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  orderTableCell: {
+    justifyContent: 'center',
+    paddingRight: 16,
+  },
+  orderTableOrderColumn: {
+    width: 160,
+  },
+  orderTableCustomerColumn: {
+    width: 170,
+  },
+  orderTableTimelineColumn: {
+    width: 260,
+  },
+  orderTableItemsColumn: {
+    width: 116,
+  },
+  orderTableTotalColumn: {
+    width: 132,
+  },
+  orderTableActionsColumn: {
+    width: 110,
   },
   orderLabel: {
     fontSize: 12,
+    marginBottom: 6,
   },
   orderId: {
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  orderIdMobile: {
+    marginBottom: 0,
+    fontSize: 17,
+  },
+  orderIdMobileDense: {
+    fontSize: 15,
   },
   statusBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 999,
-    minHeight: 24,
+    minHeight: 26,
     justifyContent: 'center',
   },
   statusBadgeCompact: {
@@ -2460,48 +3163,91 @@ const styles = StyleSheet.create({
   statusTextCompact: {
     fontSize: 10,
   },
-  orderDetails: {
-    gap: 8,
-    marginBottom: 12,
+  tableMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  detailRow: {
+  tableIconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tableMetaContent: {
+    flex: 1,
+    gap: 3,
+  },
+  tableMetaTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  tableMetaSubtitle: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  orderTimeline: {
+    gap: 8,
+  },
+  timelineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  detailText: {
+  timelineText: {
+    flex: 1,
     fontSize: 12,
+    lineHeight: 17,
   },
-  orderFooter: {
+  metricPill: {
+    alignSelf: 'flex-start',
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(127, 63, 242, 0.2)',
-  },
-  orderFooterCompact: {
-    flexDirection: 'column',
-    alignItems: 'flex-start',
     gap: 8,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  metricPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  orderTotalLabel: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginBottom: 6,
   },
   orderTotal: {
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  orderTotalMobile: {
     fontSize: 20,
-    fontWeight: 'bold',
   },
-  cardActions: {
+  actionIconRow: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
   },
-  cardActionsCompact: {
-    flexDirection: 'column',
-  },
-  actionButton: {
+  actionIconButton: {
+    width: 32,
+    height: 32,
+    margin: 0,
+    borderWidth: 1,
     borderRadius: 8,
   },
-  actionButtonContent: {
-    paddingVertical: 6,
+  actionIconButtonMobile: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+  },
+  actionIconButtonCompact: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
   },
   actionButtonDisabled: {
     opacity: 0.6,
@@ -2628,25 +3374,6 @@ const styles = StyleSheet.create({
   },
   dateInputCard: {
     gap: 8,
-  },
-  datePickerSection: {
-    gap: 8,
-  },
-  datePickerRow: {
-    borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    minHeight: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  datePickerButton: {
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
   },
   modalLabel: {
     fontSize: 12,
@@ -2824,6 +3551,13 @@ const styles = StyleSheet.create({
   statusOptionText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  statusConfirmCard: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 4,
   },
   statusUpdateHint: {
     marginTop: 6,

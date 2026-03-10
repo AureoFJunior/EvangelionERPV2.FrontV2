@@ -219,12 +219,12 @@ export function PayableBills() {
   };
 
   if (loading) {
-    return <NervLoader fullScreen label={t('Syncing Payables')} subtitle={t('Loading payable bills...')} />;
+    return <NervLoader variant="payables" fullScreen label={t('Syncing Payables')} subtitle={t('Loading payable bills...')} />;
   }
 
   return (
     <>
-      <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
+      <ScrollView style={styles.container}>
         <View style={[styles.content, { padding: contentPadding }]}>
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
@@ -541,26 +541,34 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
     height: 4,
@@ -580,16 +588,20 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
+    borderRadius: 16,
+    minHeight: 50,
     minWidth: 220,
   },
   searchInput: {
     fontSize: 14,
   },
   refreshButton: {
-    borderRadius: 8,
+    borderRadius: 14,
+    minHeight: 50,
   },
   createButton: {
-    borderRadius: 8,
+    borderRadius: 14,
+    minHeight: 50,
   },
   filterRow: {
     flexDirection: 'row',
@@ -626,8 +638,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   banner: {
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -636,11 +649,11 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   emptyTitle: {
     fontSize: 14,

@@ -630,7 +630,7 @@ describe('Dashboard overview', () => {
     cy.contains('Revenue').should('exist');
     cy.contains('Product Analytics').should('exist');
     cy.contains('Order Volume').should('exist');
-    cy.contains('Product Distribution').should('exist');
+    cy.contains('Product Distribution').should('not.exist');
     cy.contains('Recent Activities').should('exist');
   });
 

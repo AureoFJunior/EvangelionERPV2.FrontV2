@@ -53,10 +53,6 @@ export function CustomerCard({
     >
       <Card.Content style={styles.customerCardContent}>
         <View style={[styles.customerHeader, isCompact && styles.customerHeaderCompact]}>
-          <View style={[styles.avatar, { backgroundColor: colors.primaryPurple }]}>
-            <Text style={[styles.avatarText, { color: colors.neonGreen }]}>{data.displayName.charAt(0).toUpperCase()}</Text>
-          </View>
-
           <View style={styles.customerInfo}>
             <Text style={[styles.customerName, { color: colors.textPrimary }]} testID={`customer-name-${data.key}`}>
               {data.displayName}
@@ -82,7 +78,10 @@ export function CustomerCard({
           <View style={[styles.customerActions, isCompact && styles.customerActionsCompact]}>
             <Chip
               compact={isCompact}
-              style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}
+              style={[
+                styles.statusBadge,
+                { backgroundColor: `${statusColor}20`, borderColor: `${statusColor}45` },
+              ]}
               textStyle={[styles.statusText, { color: statusColor }]}
             >
               {t(data.status)}
@@ -94,7 +93,10 @@ export function CustomerCard({
                   icon={() => <Feather name="edit-2" size={14} color={colors.primaryPurple} />}
                   size={18}
                   onPress={() => onEdit(data.customer)}
-                  style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+                  style={[
+                    styles.actionButton,
+                    { borderColor: colors.cardBorder, backgroundColor: `${colors.appBg}55` },
+                  ]}
                   testID={`customer-edit-${data.key}`}
                 />
 
@@ -103,7 +105,11 @@ export function CustomerCard({
                   size={18}
                   onPress={() => onDeactivate(data.customer, data.displayName)}
                   disabled={isDeactivating}
-                  style={[styles.actionButton, { borderColor: colors.cardBorder }, isDeactivating && styles.actionButtonDisabled]}
+                  style={[
+                    styles.actionButton,
+                    { borderColor: colors.cardBorder, backgroundColor: `${colors.appBg}55` },
+                    isDeactivating && styles.actionButtonDisabled,
+                  ]}
                   testID={`customer-deactivate-${data.key}`}
                 />
               </View>
@@ -111,12 +117,18 @@ export function CustomerCard({
           </View>
         </View>
 
-        <View style={[styles.customerStats, isCompact && styles.customerStatsCompact]}>
-          <View style={styles.statItem}>
+        <View
+          style={[
+            styles.customerStats,
+            isCompact && styles.customerStatsCompact,
+            { borderColor: colors.cardBorder, backgroundColor: `${colors.primaryPurple}12` },
+          ]}
+        >
+          <View style={[styles.statItem, isCompact && styles.statItemCompact, { backgroundColor: `${colors.appBg}45` }]}>
             <Feather name="shopping-bag" size={16} color={colors.primaryPurple} />
             <Text style={[styles.metaText, { color: colors.textSecondary }]}>{t('{count} orders', { count: data.orderCount })}</Text>
           </View>
-          <View style={styles.statItem}>
+          <View style={[styles.statItem, isCompact && styles.statItemCompact, { backgroundColor: `${colors.appBg}45` }]}>
             <Feather name="dollar-sign" size={16} color={colors.neonGreen} />
             <Text style={[styles.metaText, { color: colors.textSecondary }]}>{formatCurrency(data.spentTotal, currency)}</Text>
           </View>
@@ -128,51 +140,47 @@ export function CustomerCard({
 
 const styles = StyleSheet.create({
   customerCard: {
-    borderRadius: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   customerCardContent: {
-    padding: 16,
+    padding: 18,
   },
   customerHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 14,
+    marginBottom: 14,
   },
   customerHeaderCompact: {
     flexDirection: 'column',
     alignItems: 'flex-start',
   },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
   customerInfo: {
     flex: 1,
+    minWidth: 0,
   },
   customerName: {
-    fontSize: 16,
-    marginBottom: 4,
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 6,
+    letterSpacing: 0.2,
   },
   customerMetaLine: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 2,
+    marginTop: 4,
   },
   metaText: {
-    fontSize: 12,
+    fontSize: 12.5,
+    flexShrink: 1,
   },
   customerActions: {
     alignItems: 'flex-end',
-    gap: 8,
+    gap: 10,
   },
   customerActionsCompact: {
     flexDirection: 'row',
@@ -181,21 +189,23 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   statusBadge: {
-    alignSelf: 'flex-start',
+    alignSelf: 'flex-end',
+    borderWidth: 1,
   },
   statusText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   actionButtons: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
   actionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1.5,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -204,7 +214,10 @@ const styles = StyleSheet.create({
   },
   customerStats: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 8,
   },
   customerStatsCompact: {
     flexDirection: 'column',
@@ -214,5 +227,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flex: 1,
+  },
+  statItemCompact: {
+    flex: 0,
+    alignSelf: 'flex-start',
   },
 });

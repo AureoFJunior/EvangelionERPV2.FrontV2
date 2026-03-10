@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import {
   Button,
@@ -42,6 +42,12 @@ interface ScenarioFormState {
   scenarioName: string;
   receivableDelayInDays: string;
   payableMultiplier: string;
+}
+
+interface ScenarioValidationPreview {
+  sanitized: ForecastSimulationScenario[];
+  fieldErrors: Record<number, string>;
+  firstError: string | null;
 }
 
 const horizonOptions: ForecastHorizon[] = [30, 60, 90];
@@ -104,10 +110,12 @@ export function Forecast() {
   };
 
   const updateScenario = (index: number, updates: Partial<ScenarioFormState>) => {
+    setSimulationError(null);
     setScenarios((prev) => prev.map((scenario, i) => (i === index ? { ...scenario, ...updates } : scenario)));
   };
 
   const addScenario = () => {
+    setSimulationError(null);
     setScenarios((prev) => [
       ...prev,
       {
@@ -119,8 +127,129 @@ export function Forecast() {
   };
 
   const removeScenario = (index: number) => {
+    setSimulationError(null);
     setScenarios((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const duplicateScenario = (index: number) => {
+    setSimulationError(null);
+    setScenarios((prev) => {
+      const source = prev[index];
+      if (!source) {
+        return prev;
+      }
+
+      const nextName = source.scenarioName?.trim()
+        ? `${source.scenarioName} Copy`
+        : `Scenario ${prev.length + 1}`;
+
+      const clone: ScenarioFormState = {
+        ...source,
+        scenarioName: nextName,
+      };
+
+      const next = [...prev];
+      next.splice(index + 1, 0, clone);
+      return next;
+    });
+  };
+
+  const appendScenarioPreset = (preset: 'optimistic' | 'delay' | 'stress') => {
+    setSimulationError(null);
+    setScenarios((prev) => {
+      if (preset === 'optimistic') {
+        return [
+          ...prev,
+          {
+            scenarioName: `Optimistic ${prev.length + 1}`,
+            receivableDelayInDays: '0',
+            payableMultiplier: '0.9',
+          },
+        ];
+      }
+
+      if (preset === 'delay') {
+        return [
+          ...prev,
+          {
+            scenarioName: `Delay ${prev.length + 1}`,
+            receivableDelayInDays: '14',
+            payableMultiplier: '1',
+          },
+        ];
+      }
+
+      return [
+        ...prev,
+        {
+          scenarioName: `Stress ${prev.length + 1}`,
+          receivableDelayInDays: '7',
+          payableMultiplier: '1.25',
+        },
+      ];
+    });
+  };
+
+  const resetScenarios = () => {
+    setSimulationError(null);
+    setScenarios(createDefaultScenarios());
+  };
+
+  const simulationPreview = useMemo<ScenarioValidationPreview>(() => {
+    const currentBalance = parseNumericInput(balanceInput);
+    if (currentBalance === null) {
+      return {
+        sanitized: [],
+        fieldErrors: {},
+        firstError: t('Current balance is invalid.'),
+      };
+    }
+
+    const mapped: ForecastSimulationScenario[] = [];
+    const fieldErrors: Record<number, string> = {};
+
+    scenarios.forEach((scenario, index) => {
+      const delay = parseNumericInput(scenario.receivableDelayInDays);
+      const multiplier = parseNumericInput(scenario.payableMultiplier);
+
+      if (delay === null || delay < 0) {
+        fieldErrors[index] = t('Receivable delay must be zero or positive.');
+        return;
+      }
+
+      if (multiplier === null || multiplier <= 0) {
+        fieldErrors[index] = t('Payable multiplier must be greater than zero.');
+        return;
+      }
+
+      mapped.push({
+        scenarioName: scenario.scenarioName.trim() || `Scenario ${index + 1}`,
+        receivableDelayInDays: Math.floor(delay),
+        payableMultiplier: multiplier,
+      });
+    });
+
+    if (Object.keys(fieldErrors).length > 0) {
+      return {
+        sanitized: [],
+        fieldErrors,
+        firstError: fieldErrors[Number(Object.keys(fieldErrors)[0])],
+      };
+    }
+
+    const sanitized = sanitizeScenarios(mapped);
+    if (sanitized.length < 2) {
+      return {
+        sanitized: [],
+        fieldErrors: {},
+        firstError: t('At least two scenarios are required.'),
+      };
+    }
+
+    return { sanitized, fieldErrors: {}, firstError: null };
+  }, [balanceInput, scenarios, t]);
+
+  const canRunSimulation = !runningSimulation && isAuthenticated && !authLoading && !simulationPreview.firstError;
 
   const runSimulation = async () => {
     const currentBalance = parseNumericInput(balanceInput);
@@ -129,28 +258,8 @@ export function Forecast() {
       return;
     }
 
-    const mappedScenarios: ForecastSimulationScenario[] = [];
-    for (const scenario of scenarios) {
-      const delay = parseNumericInput(scenario.receivableDelayInDays);
-      const multiplier = parseNumericInput(scenario.payableMultiplier);
-      if (delay === null || delay < 0) {
-        setSimulationError(t('Receivable delay must be zero or positive.'));
-        return;
-      }
-      if (multiplier === null || multiplier <= 0) {
-        setSimulationError(t('Payable multiplier must be greater than zero.'));
-        return;
-      }
-      mappedScenarios.push({
-        scenarioName: scenario.scenarioName,
-        receivableDelayInDays: Math.floor(delay),
-        payableMultiplier: multiplier,
-      });
-    }
-
-    const sanitized = sanitizeScenarios(mappedScenarios);
-    if (sanitized.length < 2) {
-      setSimulationError(t('At least two scenarios are required.'));
+    if (simulationPreview.firstError) {
+      setSimulationError(simulationPreview.firstError);
       return;
     }
 
@@ -160,7 +269,7 @@ export function Forecast() {
     const response = await erpService.runCashFlowSimulation({
       horizonInDays: horizon,
       currentBalance,
-      scenarios: sanitized,
+      scenarios: simulationPreview.sanitized,
     });
 
     if (response.ok && response.data) {
@@ -212,7 +321,10 @@ export function Forecast() {
 
   return (
     <>
-      <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
+      <ScrollView
+        style={styles.container}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={[styles.content, { padding: contentPadding }]}>
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
@@ -327,37 +439,44 @@ export function Forecast() {
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Cash Flow Graph')}</Text>
               <Card mode="outlined" style={[styles.chartCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
                 <Card.Content style={styles.chartContent}>
-                  <VictoryChart width={chartWidth} height={250} theme={VictoryTheme.material}>
-                    <VictoryAxis
-                      style={{
-                        axis: { stroke: colors.cardBorder },
-                        tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                        grid: { stroke: `${colors.cardBorder}35` },
-                      }}
-                    />
-                    <VictoryAxis
-                      dependentAxis
-                      style={{
-                        axis: { stroke: colors.cardBorder },
-                        tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                        grid: { stroke: `${colors.cardBorder}35` },
-                      }}
-                    />
-                    <VictoryLine data={cashFlowSeries} x="x" y="balance" style={{ data: { stroke: colors.neonGreen, strokeWidth: 2.8 } }} />
-                    <VictoryLine
-                      data={cashFlowSeries}
-                      x="x"
-                      y="receivable"
-                      style={{ data: { stroke: colors.primaryPurple, strokeWidth: 2, strokeDasharray: '5,4' } }}
-                    />
-                    <VictoryLine
-                      data={cashFlowSeries}
-                      x="x"
-                      y="payable"
-                      style={{ data: { stroke: colors.accentOrange, strokeWidth: 2, strokeDasharray: '5,4' } }}
-                    />
-                    <VictoryScatter data={cashFlowSeries} x="x" y="balance" size={2} style={{ data: { fill: colors.neonGreen } }} />
-                  </VictoryChart>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.chartScrollContent}
+                  >
+                    <VictoryChart width={chartWidth} height={250} theme={VictoryTheme.material}>
+                      <VictoryAxis
+                        tickCount={Math.min(8, Math.max(4, Math.ceil(cashFlowSeries.length / 6)))}
+                        style={{
+                          axis: { stroke: colors.cardBorder },
+                          tickLabels: { fill: colors.textSecondary, fontSize: 10 },
+                          grid: { stroke: `${colors.cardBorder}35` },
+                        }}
+                      />
+                      <VictoryAxis
+                        dependentAxis
+                        style={{
+                          axis: { stroke: colors.cardBorder },
+                          tickLabels: { fill: colors.textSecondary, fontSize: 10 },
+                          grid: { stroke: `${colors.cardBorder}35` },
+                        }}
+                      />
+                      <VictoryLine data={cashFlowSeries} x="x" y="balance" style={{ data: { stroke: colors.neonGreen, strokeWidth: 2.8 } }} />
+                      <VictoryLine
+                        data={cashFlowSeries}
+                        x="x"
+                        y="receivable"
+                        style={{ data: { stroke: colors.primaryPurple, strokeWidth: 2, strokeDasharray: '5,4' } }}
+                      />
+                      <VictoryLine
+                        data={cashFlowSeries}
+                        x="x"
+                        y="payable"
+                        style={{ data: { stroke: colors.accentOrange, strokeWidth: 2, strokeDasharray: '5,4' } }}
+                      />
+                      <VictoryScatter data={cashFlowSeries} x="x" y="balance" size={2} style={{ data: { fill: colors.neonGreen } }} />
+                    </VictoryChart>
+                  </ScrollView>
                   <View style={[styles.chartLegend, isCompact && styles.chartLegendCompact]}>
                     <View style={styles.legendItem}>
                       <View style={[styles.legendDot, { backgroundColor: colors.neonGreen }]} />
@@ -464,9 +583,20 @@ export function Forecast() {
               <Text style={[styles.scenarioSummaryText, { color: colors.textSecondary }]}>
                 {t('{count} scenarios configured', { count: scenarios.length })}
               </Text>
+              <View style={[styles.scenarioPillRow, isCompact && styles.scenarioPillRowCompact]}>
+                <Chip compact style={{ backgroundColor: `${colors.primaryPurple}18` }} textStyle={{ color: colors.textSecondary }}>
+                  {t('{value} days', { value: horizon })}
+                </Chip>
+                <Chip compact style={{ backgroundColor: `${colors.neonGreen}12` }} textStyle={{ color: colors.textSecondary }}>
+                  {runningSimulation ? t('Running...') : simulationResults.length > 0 ? t('Results ready') : t('Ready')}
+                </Chip>
+              </View>
               <Button
                 mode="outlined"
-                onPress={() => setScenariosVisible(true)}
+                onPress={() => {
+                  setSimulationError(null);
+                  setScenariosVisible(true);
+                }}
                 textColor={colors.textSecondary}
                 icon={({ size }) => <Feather name="sliders" size={size} color={colors.textSecondary} />}
                 style={[styles.actionButton, { borderColor: colors.cardBorder }]}
@@ -518,81 +648,182 @@ export function Forecast() {
             { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
           ]}
         >
-          <View style={styles.modalHeader}>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{t('Simulation Scenarios')}</Text>
-            <IconButton
-              icon={() => <Feather name="x" size={18} color={colors.textSecondary} />}
-              onPress={() => setScenariosVisible(false)}
-              size={18}
-              style={[styles.modalClose, { borderColor: colors.cardBorder }]}
-            />
-          </View>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{t('Simulation Scenarios')}</Text>
+              <IconButton
+                icon={() => <Feather name="x" size={18} color={colors.textSecondary} />}
+                onPress={() => setScenariosVisible(false)}
+                size={18}
+                style={[styles.modalClose, { borderColor: colors.cardBorder }]}
+              />
+            </View>
 
-          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent}>
-            {scenarios.map((scenario, index) => (
-              <View key={`${scenario.scenarioName}-${index}`} style={[styles.scenarioCard, { borderColor: colors.cardBorder }]}>
-                <View style={styles.scenarioHeader}>
-                  <Text style={[styles.scenarioTitle, { color: colors.textPrimary }]}>{t('Scenario {value}', { value: index + 1 })}</Text>
-                  {scenarios.length > 2 && (
-                    <Button mode="text" onPress={() => removeScenario(index)} textColor={colors.accentOrange}>
-                      {t('Remove')}
-                    </Button>
-                  )}
+            <View style={[styles.modalHintCard, { borderColor: colors.cardBorder, backgroundColor: `${colors.primaryPurple}10` }]}>
+              <Text style={[styles.modalHintTitle, { color: colors.textPrimary }]}>
+                {t('Configure scenarios and compare outcomes')}
+              </Text>
+              <Text style={[styles.modalHintText, { color: colors.textSecondary }]}>
+                {t('Tip: keep one baseline and add stress/optimistic variations for comparison.')}
+              </Text>
+            </View>
+
+            <View style={[styles.quickPresetRow, isCompact && styles.quickPresetRowCompact]}>
+              <Chip
+                compact
+                onPress={() => appendScenarioPreset('optimistic')}
+                style={[styles.quickPresetChip, { backgroundColor: colors.cardBgTo, borderColor: colors.cardBorder }]}
+                textStyle={{ color: colors.textSecondary }}
+              >
+                +0d / 0.9x
+              </Chip>
+              <Chip
+                compact
+                onPress={() => appendScenarioPreset('delay')}
+                style={[styles.quickPresetChip, { backgroundColor: colors.cardBgTo, borderColor: colors.cardBorder }]}
+                textStyle={{ color: colors.textSecondary }}
+              >
+                +14d / 1.0x
+              </Chip>
+              <Chip
+                compact
+                onPress={() => appendScenarioPreset('stress')}
+                style={[styles.quickPresetChip, { backgroundColor: colors.cardBgTo, borderColor: colors.cardBorder }]}
+                textStyle={{ color: colors.textSecondary }}
+              >
+                +7d / 1.25x
+              </Chip>
+              <Chip
+                compact
+                onPress={resetScenarios}
+                style={[styles.quickPresetChip, { backgroundColor: colors.cardBgTo, borderColor: colors.cardBorder }]}
+                textStyle={{ color: colors.textSecondary }}
+              >
+                {t('Reset')}
+              </Chip>
+            </View>
+
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+            >
+              {scenarios.map((scenario, index) => (
+                <View key={`${scenario.scenarioName}-${index}`} style={[styles.scenarioCard, { borderColor: colors.cardBorder }]}>
+                  <View style={styles.scenarioHeader}>
+                    <View style={styles.scenarioHeaderTitleWrap}>
+                      <Text style={[styles.scenarioTitle, { color: colors.textPrimary }]}>{t('Scenario {value}', { value: index + 1 })}</Text>
+                      {index === 0 ? (
+                        <Chip compact style={{ backgroundColor: `${colors.neonGreen}12` }} textStyle={{ color: colors.neonGreen }}>
+                          {t('Baseline')}
+                        </Chip>
+                      ) : null}
+                    </View>
+                    <View style={styles.scenarioHeaderActions}>
+                      <IconButton
+                        icon={() => <Feather name="copy" size={14} color={colors.textSecondary} />}
+                        onPress={() => duplicateScenario(index)}
+                        size={16}
+                        style={[styles.inlineIconButton, { borderColor: colors.cardBorder }]}
+                      />
+                      {scenarios.length > 2 && (
+                        <IconButton
+                          icon={() => <Feather name="trash-2" size={14} color={colors.accentOrange} />}
+                          onPress={() => removeScenario(index)}
+                          size={16}
+                          style={[styles.inlineIconButton, { borderColor: colors.cardBorder }]}
+                        />
+                      )}
+                    </View>
+                  </View>
+                  <TextInput
+                    mode="outlined"
+                    label={t('Scenario Name')}
+                    value={scenario.scenarioName}
+                    onChangeText={(value) => updateScenario(index, { scenarioName: value })}
+                    style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
+                  />
+                  <TextInput
+                    mode="outlined"
+                    label={t('Receivable Delay (days)')}
+                    value={scenario.receivableDelayInDays}
+                    onChangeText={(value) => updateScenario(index, { receivableDelayInDays: value })}
+                    keyboardType="numeric"
+                    style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
+                  />
+                  <TextInput
+                    mode="outlined"
+                    label={t('Payable Multiplier')}
+                    value={scenario.payableMultiplier}
+                    onChangeText={(value) => updateScenario(index, { payableMultiplier: value })}
+                    keyboardType="numeric"
+                    style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
+                  />
+                  <View style={styles.scenarioPreviewRow}>
+                    <Chip compact style={{ backgroundColor: `${colors.primaryPurple}15` }} textStyle={{ color: colors.textSecondary }}>
+                      {scenario.receivableDelayInDays || '0'}d
+                    </Chip>
+                    <Chip compact style={{ backgroundColor: `${colors.accentOrange}12` }} textStyle={{ color: colors.textSecondary }}>
+                      {scenario.payableMultiplier || '0'}x
+                    </Chip>
+                    {simulationPreview.fieldErrors[index] ? (
+                      <Text style={[styles.scenarioFieldError, { color: colors.accentOrange }]}>
+                        {simulationPreview.fieldErrors[index]}
+                      </Text>
+                    ) : (
+                      <Text style={[styles.scenarioFieldOk, { color: colors.neonGreen }]}>
+                        {t('Valid')}
+                      </Text>
+                    )}
+                  </View>
                 </View>
-                <TextInput
-                  mode="outlined"
-                  label={t('Scenario Name')}
-                  value={scenario.scenarioName}
-                  onChangeText={(value) => updateScenario(index, { scenarioName: value })}
-                  style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
-                />
-                <TextInput
-                  mode="outlined"
-                  label={t('Receivable Delay (days)')}
-                  value={scenario.receivableDelayInDays}
-                  onChangeText={(value) => updateScenario(index, { receivableDelayInDays: value })}
-                  keyboardType="numeric"
-                  style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
-                />
-                <TextInput
-                  mode="outlined"
-                  label={t('Payable Multiplier')}
-                  value={scenario.payableMultiplier}
-                  onChangeText={(value) => updateScenario(index, { payableMultiplier: value })}
-                  keyboardType="numeric"
-                  style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
-                />
-              </View>
-            ))}
-          </ScrollView>
+              ))}
+            </ScrollView>
 
-          <View style={[styles.scenarioActions, isCompact && styles.scenarioActionsCompact]}>
-            <Button
-              mode="outlined"
-              onPress={addScenario}
-              textColor={colors.textSecondary}
-              icon={({ size }) => <Feather name="plus-circle" size={size} color={colors.textSecondary} />}
-              style={[styles.actionButton, { borderColor: colors.cardBorder }]}
-            >
-              {t('Add Scenario')}
-            </Button>
-            <Button
-              mode="contained"
-              onPress={runSimulation}
-              loading={runningSimulation}
-              disabled={runningSimulation || !isAuthenticated || authLoading}
-              buttonColor={colors.primaryPurple}
-              textColor={colors.neonGreen}
-              icon={({ size }) => <Feather name="play" size={size} color={colors.neonGreen} />}
-              style={styles.actionButton}
-            >
-              {t('Run Simulation')}
-            </Button>
-          </View>
+            <View style={[styles.scenarioActions, isCompact && styles.scenarioActionsCompact]}>
+              <Button
+                mode="outlined"
+                onPress={resetScenarios}
+                textColor={colors.textSecondary}
+                icon={({ size }) => <Feather name="rotate-ccw" size={size} color={colors.textSecondary} />}
+                style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+              >
+                {t('Reset')}
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={addScenario}
+                textColor={colors.textSecondary}
+                icon={({ size }) => <Feather name="plus-circle" size={size} color={colors.textSecondary} />}
+                style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+              >
+                {t('Add Scenario')}
+              </Button>
+              <Button
+                mode="contained"
+                onPress={runSimulation}
+                loading={runningSimulation}
+                disabled={!canRunSimulation}
+                buttonColor={colors.primaryPurple}
+                textColor={colors.neonGreen}
+                icon={({ size }) => <Feather name="play" size={size} color={colors.neonGreen} />}
+                style={styles.actionButton}
+              >
+                {t('Run Simulation')}
+              </Button>
+            </View>
 
-          <HelperText type="error" visible={Boolean(simulationError)}>
-            {simulationError}
-          </HelperText>
+            <HelperText type="error" visible={Boolean(simulationError)}>
+              {simulationError}
+            </HelperText>
+            <HelperText type="info" visible={!simulationError && Boolean(simulationPreview.firstError)}>
+              {simulationPreview.firstError}
+            </HelperText>
+          </KeyboardAvoidingView>
         </Modal>
       </Portal>
     </>
@@ -604,26 +835,34 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
     height: 4,
@@ -631,8 +870,9 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   banner: {
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -707,6 +947,9 @@ const styles = StyleSheet.create({
   chartContent: {
     alignItems: 'center',
     gap: 8,
+  },
+  chartScrollContent: {
+    paddingHorizontal: 4,
   },
   chartLegend: {
     flexDirection: 'row',
@@ -807,6 +1050,42 @@ const styles = StyleSheet.create({
   scenarioSummaryText: {
     fontSize: 12,
   },
+  scenarioPillRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  scenarioPillRowCompact: {
+    gap: 6,
+  },
+  modalHintCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    gap: 4,
+  },
+  modalHintTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalHintText: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  quickPresetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  quickPresetRowCompact: {
+    gap: 6,
+  },
+  quickPresetChip: {
+    borderWidth: 1,
+  },
   scenarioCard: {
     borderWidth: 1,
     borderRadius: 10,
@@ -817,13 +1096,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
+  },
+  scenarioHeaderTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+  },
+  scenarioHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   scenarioTitle: {
     fontSize: 14,
     fontWeight: '700',
   },
+  inlineIconButton: {
+    borderWidth: 1,
+    borderRadius: 10,
+    margin: 0,
+  },
   input: {
     marginTop: 2,
+  },
+  scenarioPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  scenarioFieldError: {
+    fontSize: 11,
+    flexShrink: 1,
+  },
+  scenarioFieldOk: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   scenarioActions: {
     marginTop: 10,

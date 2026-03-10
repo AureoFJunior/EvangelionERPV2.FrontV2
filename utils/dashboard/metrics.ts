@@ -62,10 +62,13 @@ export const buildMonthlyBuckets = (months = 6) => {
 
 export const buildCreatedAtSeries = (
   buckets: Array<{ label: string; year: number; month: number }>,
-  rows: Array<{ createdAt?: string }>,
+  rows: Array<{ createdAt?: string; isActive?: boolean }>,
 ) =>
   buckets.map((bucket) => {
     const count = rows.filter((row) => {
+      if (row.isActive === false) {
+        return false;
+      }
       const created = parseDate(row.createdAt ?? '');
       if (!created) {
         return false;
@@ -81,6 +84,9 @@ export const buildOrderDateSeries = (
 ) =>
   buckets.map((bucket) => {
     const count = orders.filter((order) => {
+      if (isInactiveOrder(order)) {
+        return false;
+      }
       const created = parseDate(order.date ?? '');
       if (!created) {
         return false;
@@ -91,13 +97,14 @@ export const buildOrderDateSeries = (
   });
 
 export const buildCategoryData = (products: ProductModel[]) => {
+  const activeProducts = products.filter((product) => product.isActive !== false);
   const counts = new Map<string, number>();
-  products.forEach((product) => {
+  activeProducts.forEach((product) => {
     const category = product.category || 'Uncategorized';
     counts.set(category, (counts.get(category) ?? 0) + 1);
   });
 
-  const total = products.length;
+  const total = activeProducts.length;
   if (total === 0) {
     return [{ x: 'No data', y: 100 }];
   }
@@ -112,6 +119,9 @@ export const buildActivities = (orders: OrderModel[], products: ProductModel[]) 
   const events: { action: string; time: string; date: Date }[] = [];
 
   orders.forEach((order) => {
+    if (isInactiveOrder(order)) {
+      return;
+    }
     const created = parseDate(order.date ?? '');
     if (!created) {
       return;
@@ -124,6 +134,9 @@ export const buildActivities = (orders: OrderModel[], products: ProductModel[]) 
   });
 
   products.forEach((product) => {
+    if (product.isActive === false) {
+      return;
+    }
     const created = parseDate(product.updatedAt ?? product.createdAt ?? '');
     if (!created) {
       return;
@@ -141,12 +154,16 @@ export const buildActivities = (orders: OrderModel[], products: ProductModel[]) 
     .map(({ action, time }) => ({ action, time }));
 };
 
-const isActiveCustomer = (customer: CustomerModel) => {
-  if (customer.isActive === false) {
-    return false;
+const isInactiveOrder = (order: OrderModel) => {
+  if (order.isActive === false) {
+    return true;
   }
-  const status = (customer.status ?? '').toLowerCase();
-  return status !== 'inactive' && status !== 'disabled' && status !== 'blocked';
+  const status = (order.status ?? '').toLowerCase();
+  return status === 'inactive' || status === 'cancelled' || status === 'canceled' || status === 'deleted';
+};
+
+const isActiveCustomer = (customer: CustomerModel) => {
+  return customer.isActive === true;
 };
 
 const isInRange = (date: Date, start: Date, end: Date) => date >= start && date < end;
@@ -181,10 +198,14 @@ export const buildDashboardTotals = (
   orders: OrderModel[],
   customers: CustomerModel[],
 ) => {
-  const totalProducts = products.length;
-  const totalOrders = orders.length;
-  const activeCustomers = customers.filter(isActiveCustomer).length;
-  const revenue = orders.reduce(
+  const activeProducts = products.filter((product) => product.isActive !== false);
+  const activeOrders = orders.filter((order) => !isInactiveOrder(order));
+  const activeCustomersRows = customers.filter(isActiveCustomer);
+
+  const totalProducts = activeProducts.length;
+  const totalOrders = activeOrders.length;
+  const activeCustomers = activeCustomersRows.length;
+  const revenue = activeOrders.reduce(
     (sum, order) => sum + (typeof order.total === 'number' ? order.total : 0),
     0,
   );
@@ -197,14 +218,14 @@ export const buildDashboardTotals = (
   const prev30End = new Date(now);
   prev30End.setDate(now.getDate() - 30);
 
-  const productLast30 = countDateRange(products, last30Start, now);
-  const productPrev30 = countDateRange(products, prev30Start, prev30End);
-  const ordersLast30 = countOrderRange(orders, last30Start, now);
-  const ordersPrev30 = countOrderRange(orders, prev30Start, prev30End);
-  const customersLast30 = countDateRange(customers, last30Start, now);
-  const customersPrev30 = countDateRange(customers, prev30Start, prev30End);
-  const revenueLast30 = sumOrderRange(orders, last30Start, now);
-  const revenuePrev30 = sumOrderRange(orders, prev30Start, prev30End);
+  const productLast30 = countDateRange(activeProducts, last30Start, now);
+  const productPrev30 = countDateRange(activeProducts, prev30Start, prev30End);
+  const ordersLast30 = countOrderRange(activeOrders, last30Start, now);
+  const ordersPrev30 = countOrderRange(activeOrders, prev30Start, prev30End);
+  const customersLast30 = countDateRange(activeCustomersRows, last30Start, now);
+  const customersPrev30 = countDateRange(activeCustomersRows, prev30Start, prev30End);
+  const revenueLast30 = sumOrderRange(activeOrders, last30Start, now);
+  const revenuePrev30 = sumOrderRange(activeOrders, prev30Start, prev30End);
 
   return {
     totalProducts,

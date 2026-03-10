@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Card, TouchableRipple } from './ui/Paper';
+import * as FileSystem from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
+import { Button, Card, TouchableRipple } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
@@ -20,9 +22,10 @@ const languageMeta: Record<AppLanguage, { key: string; short: string }> = {
 export function UserProfile() {
   const { colors } = useTheme();
   const { t } = useI18n();
-  const { user, setUserLanguage } = useAuth();
+  const { user, setUserLanguage, setUserProfilePicture } = useAuth();
   const { isCompact, contentPadding } = useResponsive();
   const [updatingLanguage, setUpdatingLanguage] = useState<AppLanguage | null>(null);
+  const [updatingPicture, setUpdatingPicture] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -49,8 +52,60 @@ export function UserProfile() {
     }
   };
 
+  const handleProfilePictureChange = async () => {
+    if (updatingPicture) {
+      return;
+    }
+
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setUpdatingPicture(true);
+
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setErrorMessage(t('Gallery permission is required to select a picture.'));
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+        allowsEditing: true,
+        aspect: [1, 1],
+        base64: true,
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      let base64 = asset.base64 ?? '';
+      if (!base64 && asset.uri) {
+        base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
+      if (!base64) {
+        throw new Error('Missing image payload');
+      }
+
+      const mimeType = asset.mimeType ?? 'image/jpeg';
+      const dataUri = `data:${mimeType};base64,${base64}`;
+
+      await setUserProfilePicture(dataUri);
+      setSuccessMessage(t('Profile picture updated.'));
+    } catch {
+      setErrorMessage(t('Unable to update profile picture.'));
+    } finally {
+      setUpdatingPicture(false);
+    }
+  };
+
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.appBg }]}>
+    <ScrollView style={styles.container}>
       <View style={[styles.content, { padding: contentPadding }]}>
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
@@ -81,10 +136,31 @@ export function UserProfile() {
 
         <Card mode="outlined" style={[styles.profileCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
           <Card.Content style={styles.profileCardContent}>
-            <View style={[styles.avatarBadge, { borderColor: colors.neonGreen, backgroundColor: `${colors.primaryPurple}20` }]}>
-              <Feather name="user" size={20} color={colors.neonGreen} />
+            <View style={[styles.avatarPanel, isCompact && styles.avatarPanelCompact]}>
+              <View style={[styles.avatarBadge, { borderColor: colors.neonGreen, backgroundColor: `${colors.primaryPurple}20` }]}>
+                {user?.avatarUrl ? (
+                  <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} resizeMode="cover" />
+                ) : (
+                  <Feather name="user" size={32} color={colors.neonGreen} />
+                )}
+              </View>
+              <Button
+                mode="outlined"
+                onPress={handleProfilePictureChange}
+                loading={updatingPicture}
+                disabled={updatingPicture}
+                textColor={colors.textSecondary}
+                icon={({ size }) => <Feather name="image" size={size} color={colors.textSecondary} />}
+                style={[styles.pictureButton, { borderColor: colors.cardBorder }]}
+                compact
+              >
+                {t('Change Picture')}
+              </Button>
             </View>
             <View style={styles.profileInfo}>
+              <Text style={[styles.profileMetaLabel, { color: colors.textMuted }]}>
+                {t('Profile Picture')}
+              </Text>
               <Text style={[styles.profileName, { color: colors.textPrimary }]}>
                 {user?.name ?? t('User')}
               </Text>
@@ -171,31 +247,39 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
   },
   header: {
     marginBottom: 20,
   },
   title: {
-    fontSize: 28,
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 22,
-    letterSpacing: 1.4,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    lineHeight: 30,
   },
   subtitle: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 10,
   },
   subtitleCompact: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   headerLine: {
-    height: 4,
-    width: 100,
-    borderRadius: 2,
+    height: 6,
+    width: 132,
+    borderRadius: 999,
   },
   banner: {
     padding: 12,
@@ -213,20 +297,41 @@ const styles = StyleSheet.create({
   profileCardContent: {
     padding: 16,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 14,
   },
+  avatarPanel: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  avatarPanelCompact: {
+    alignItems: 'flex-start',
+  },
   avatarBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 92,
+    height: 92,
+    borderRadius: 46,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  pictureButton: {
+    borderWidth: 1,
+    borderRadius: 999,
   },
   profileInfo: {
     flex: 1,
     gap: 2,
+  },
+  profileMetaLabel: {
+    fontSize: 10,
+    letterSpacing: 0.8,
+    marginBottom: 2,
   },
   profileName: {
     fontSize: 16,
