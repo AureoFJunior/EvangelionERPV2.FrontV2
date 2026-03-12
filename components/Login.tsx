@@ -280,7 +280,11 @@ export function Login() {
               <View style={styles.cardSections}>
                 <View style={[styles.logoContainer, isCompact && styles.logoContainerCompact]}>
                   <View style={[styles.logoBox, { backgroundColor: colors.primaryPurple }, isCompact && styles.logoBoxCompact]}>
-                    <Image source={require('../assets/images/icon.png')} style={styles.logoImage} resizeMode="contain" />
+                    <Image
+                      source={require('../assets/images/logo-mark.png')}
+                      style={styles.logoImage}
+                      resizeMode="contain"
+                    />
                   </View>
                   <View style={styles.logoTextContainer}>
                     <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
@@ -555,8 +559,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   logoImage: {
-    width: '82%',
-    height: '82%',
+    width: '72%',
+    height: '92%',
   },
   logoTextContainer: {
     flex: 1,

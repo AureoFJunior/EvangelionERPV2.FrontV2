@@ -1,4 +1,4 @@
-const apiBaseUrl = () => Cypress.env('API_BASE_URL') || 'http://localhost:5002/api/v1';
+const apiBaseUrl = () => Cypress.env('API_BASE_URL') || 'http://localhost:8082/api/v1';
 const adminUsername = Cypress.env('ADMIN_USERNAME') || 'admin';
 const adminPassword = Cypress.env('ADMIN_PASSWORD') || '1234';
 

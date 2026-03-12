@@ -23,7 +23,7 @@ module.exports = defineConfig({
       API_BASE_URL:
         process.env.CYPRESS_API_BASE_URL ||
         process.env.EXPO_PUBLIC_API_BASE_URL ||
-        'http://localhost:5002/api/v1',
+        'http://localhost:8082/api/v1',
       ADMIN_USERNAME: process.env.CYPRESS_ADMIN_USERNAME || 'admin',
       ADMIN_PASSWORD: process.env.CYPRESS_ADMIN_PASSWORD || '1234',
     },

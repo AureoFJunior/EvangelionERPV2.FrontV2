@@ -150,6 +150,50 @@ const pickFirstString = (...values: unknown[]) => {
   return null;
 };
 
+const normalizeImageUri = (value: unknown) => {
+  const uri = pickFirstString(value);
+  if (!uri) {
+    return null;
+  }
+
+  if (
+    uri.startsWith('http://') ||
+    uri.startsWith('https://') ||
+    uri.startsWith('data:') ||
+    uri.startsWith('file:') ||
+    uri.startsWith('blob:')
+  ) {
+    return uri;
+  }
+
+  const base64Payload = uri.replace(/\s+/g, '');
+  const isBase64 =
+    base64Payload.length >= 16 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(base64Payload);
+
+  if (!isBase64) {
+    return null;
+  }
+
+  const mimeType = (() => {
+    if (base64Payload.startsWith('/9j/')) {
+      return 'image/jpeg';
+    }
+    if (base64Payload.startsWith('iVBOR')) {
+      return 'image/png';
+    }
+    if (base64Payload.startsWith('R0lGOD')) {
+      return 'image/gif';
+    }
+    if (base64Payload.startsWith('UklGR')) {
+      return 'image/webp';
+    }
+    return 'image/jpeg';
+  })();
+
+  return `data:${mimeType};base64,${base64Payload}`;
+};
+
 const pickFromRecords = (records: Array<Record<string, any>>, keys: string[]) => {
   for (const record of records) {
     for (const key of keys) {
@@ -364,7 +408,8 @@ const resolveUserProfile = (
     null;
 
   const avatarUrl =
-    pickFromRecords(records, [
+    normalizeImageUri(
+      pickFromRecords(records, [
       'picture',
       'avatar',
       'avatarUrl',
@@ -375,8 +420,9 @@ const resolveUserProfile = (
       'profile_image',
       'photo',
       'image',
-    ]) ||
-    pickFirstString(fallback?.avatarUrl) ||
+    ]),
+    ) ||
+    normalizeImageUri(fallback?.avatarUrl) ||
     null;
 
   const role = pickRole(records) || pickFirstString(fallback?.role) || null;
