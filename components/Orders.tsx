@@ -2,16 +2,18 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
+import { StatusBadge } from './StatusBadge';
+import { SegmentedControl } from './SegmentedControl';
+import { HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr';
 import {
   Button,
-  Chip,
   HelperText,
   IconButton,
   Searchbar,
@@ -52,8 +54,10 @@ import {
   toIdKey,
   unitAllowsDecimal,
 } from '../utils/orders/helpers';
+import { getStorageQuantity } from '../utils/products/form';
 import { parseDateValue } from '../utils/datetime';
 import { hasManagementAccess } from '../utils/access';
+import { useToast } from '../contexts/ToastContext';
 
 const orderStatusOptions = ['Pending', 'Processing', 'Paid', 'Shipped', 'Delivered', 'Finished'] as const;
 type OrderStatusOption = (typeof orderStatusOptions)[number];
@@ -77,7 +81,7 @@ const resolveStatusOption = (value?: string | null): OrderStatusOption => {
 };
 const shouldShowPaidAt = (status?: string | null) => {
   const normalized = resolveStatusOption(status);
-  return normalized === 'Paid' || normalized === 'Finished';
+  return normalized === 'Paid' || normalized === 'Shipped' || normalized === 'Delivered' || normalized === 'Finished';
 };
 const resolveItemsFromOrderedProducts = (order: OrderModel) => {
   if (!order.orderedProduct || order.orderedProduct.length === 0) {
@@ -100,6 +104,7 @@ export function Orders() {
   const { colors } = useTheme();
   const { t, language } = useI18n();
   const { client, token, isAuthenticated, loading: authLoading, enterpriseId, currency, user } = useAuth();
+  const { showToast } = useToast();
   const erpService = useMemo(() => new ErpService(client), [client]);
   const canManageOrders = hasManagementAccess(user?.role);
   const managementDeniedMessage = t('Only Admin, Manager, and Supervisor can edit or delete orders.');
@@ -136,15 +141,32 @@ export function Orders() {
     }
     return dateTimeFormatter.format(parsed);
   };
+  const dateOnlyFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(dateTimeLocale, {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+      }),
+    [dateTimeLocale],
+  );
+  const formatOrderDate = (value: string | number | Date | null | undefined, fallback = '--') => {
+    const parsed = parseDateValue(value);
+    if (!parsed) {
+      return fallback;
+    }
+    return dateOnlyFormatter.format(parsed);
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [startDateFilter, setStartDateFilter] = useState<Date | null>(null);
   const [endDateFilter, setEndDateFilter] = useState<Date | null>(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const hasDateFilter = startDateFilter !== null || endDateFilter !== null;
   const [refreshKey, setRefreshKey] = useState(0);
   const [orders, setOrders] = useState<OrderModel[]>([]);
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [detailsOrder, setDetailsOrder] = useState<OrderModel | null>(null);
   const [detailsCustomer, setDetailsCustomer] = useState<CustomerModel | null>(null);
@@ -198,6 +220,41 @@ export function Orders() {
     const merged = ['ReceiveOrderUpdate', ...entries];
     return Array.from(new Set(merged));
   }, []);
+  const datePresets = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const startOfWeek = new Date(today);
+    const day = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - (day === 0 ? 6 : day - 1));
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(endOfWeek.getDate() + 6);
+
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+    const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+
+    return [
+      { label: t('Today'), start: new Date(today), end: new Date(today) },
+      { label: t('This Week'), start: startOfWeek, end: endOfWeek },
+      { label: t('This Month'), start: startOfMonth, end: endOfMonth },
+      { label: t('Last Month'), start: startOfLastMonth, end: endOfLastMonth },
+    ];
+  }, [t]);
+
+  const activePresetLabel = useMemo(() => {
+    if (!startDateFilter || !endDateFilter) return null;
+    const match = datePresets.find(
+      (p) =>
+        p.start.toDateString() === startDateFilter.toDateString() &&
+        p.end.toDateString() === endDateFilter.toDateString(),
+    );
+    return match?.label ?? null;
+  }, [startDateFilter, endDateFilter, datePresets]);
+
   const orderFilter = useMemo(() => {
     if (!startDateFilter && !endDateFilter) {
       return { isActive: true };
@@ -227,7 +284,7 @@ export function Orders() {
 
     const loadOrders = async () => {
       setLoading(true);
-      setErrorMessage(null);
+
 
       const response = await erpService.fetchOrders(pageNumber, pageSize, false, orderFilter);
       if (!active) {
@@ -239,7 +296,7 @@ export function Orders() {
         setOrders(activeOrders);
         setHasMore(response.data.length === pageSize);
       } else {
-        setErrorMessage(response.error ?? t('Unable to load orders'));
+        showToast(response.error ?? t('Unable to load orders'));
       }
 
       setLoading(false);
@@ -253,24 +310,21 @@ export function Orders() {
   }, [erpService, isAuthenticated, authLoading, pageNumber, pageSize, orderFilter, refreshKey]);
 
   useEffect(() => {
-    if (!isAuthenticated || authLoading || !ordersHubUrl) {
+    if (!isAuthenticated || authLoading || !ordersHubUrl || !token) {
       return;
     }
 
     let active = true;
-    const tokenValue = token ?? '';
-    const hubUrlWithToken =
-      tokenValue && ordersHubUrl
-        ? `${ordersHubUrl}${ordersHubUrl.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(tokenValue)}`
-        : ordersHubUrl;
+    const tokenValue = token;
 
     const connection = new HubConnectionBuilder()
-      .withUrl(hubUrlWithToken, {
+      .withUrl(ordersHubUrl, {
         accessTokenFactory: () => tokenValue,
         withCredentials: false,
+        transport: HttpTransportType.WebSockets | HttpTransportType.ServerSentEvents | HttpTransportType.LongPolling,
       })
-      .withAutomaticReconnect()
-      .configureLogging(LogLevel.Warning)
+      .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
+      .configureLogging(LogLevel.Information)
       .build();
 
     const handleOrderEvent = (orderId?: string, status?: string) => {
@@ -309,7 +363,7 @@ export function Orders() {
       if (!active) {
         return;
       }
-      setErrorMessage(
+      showToast(
         t('Live updates unavailable: {message}', {
           message: error?.message ?? t('unable to connect to SignalR'),
         }),
@@ -430,7 +484,7 @@ export function Orders() {
           customersResponse.error ??
           productsResponse.error ??
           t('Unable to load order options');
-        setErrorMessage(fallbackError);
+        showToast(fallbackError);
       }
 
       setOptionsLoading(false);
@@ -455,7 +509,7 @@ export function Orders() {
   };
 
   const openDatePicker = () => {
-    setErrorMessage(null);
+    /* toast clears automatically */
     setDatePickerVisible(true);
   };
 
@@ -464,7 +518,7 @@ export function Orders() {
   };
 
   const openPaymentDatePicker = () => {
-    setErrorMessage(null);
+    /* toast clears automatically */
     setPaymentDatePickerVisible(true);
   };
 
@@ -489,10 +543,10 @@ export function Orders() {
     endDate?: Date;
   }) => {
     if (startDate && endDate && endDate < startDate) {
-      setErrorMessage(t('End date must be after the start date.'));
+      showToast(t('End date must be after the start date.'), 'warning');
       return;
     }
-    setErrorMessage(null);
+    /* toast clears automatically */
     setStartDateFilter(startDate ?? null);
     setEndDateFilter(endDate ?? null);
     setPageNumber(1);
@@ -605,7 +659,7 @@ export function Orders() {
             ),
           );
         } else if (response.error) {
-          setErrorMessage(response.error);
+          showToast(response.error);
         }
       }
 
@@ -671,8 +725,9 @@ export function Orders() {
                       typeof order.items === 'number' && order.items > 0
                         ? order.items
                         : resolveOrderItems(response.data),
-                    // Preserve list status; details prefetch should not override user-visible status.
                     status: order.status,
+                    payday: response.data.payday ?? order.payday,
+                    paymentDate: response.data.paymentDate ?? order.paymentDate,
                     customer:
                       response.data.customer &&
                       response.data.customer !== UNKNOWN_CUSTOMER &&
@@ -686,7 +741,7 @@ export function Orders() {
             ),
           );
         } else if (response.error) {
-          setErrorMessage(response.error);
+          showToast(response.error);
         }
       }
     };
@@ -775,14 +830,15 @@ export function Orders() {
               typeof current.items === 'number' && current.items > 0
                 ? current.items
                 : resolveOrderItems(response.data),
-            // Preserve current modal status to avoid stale fetch overriding recent status changes.
             status: current.status,
+            payday: response.data.payday ?? current.payday,
+            paymentDate: response.data.paymentDate ?? current.paymentDate,
             customer: mergedCustomer,
             customerId: response.data.customerId ?? current.customerId,
           };
         });
       } else if (response.error) {
-        setErrorMessage(response.error);
+        showToast(response.error);
       }
       setDetailsLoading(false);
     };
@@ -810,10 +866,10 @@ export function Orders() {
 
   const openCreate = () => {
     if (!isAuthenticated || authLoading) {
-      setErrorMessage(t('Authenticate to manage orders.'));
+      showToast(t('Authenticate to manage orders.'), 'warning');
       return;
     }
-    setErrorMessage(null);
+    /* toast clears automatically */
     setOrderDateLabel(formatOrderDateTime(new Date()));
     setCustomerDropdownOpen(false);
     setProductDropdownOpen(false);
@@ -868,7 +924,7 @@ export function Orders() {
 
   const confirmDelete = async () => {
     if (!canManageOrders) {
-      setErrorMessage(managementDeniedMessage);
+      showToast(managementDeniedMessage, 'warning');
       closeDeleteConfirm();
       return;
     }
@@ -879,7 +935,7 @@ export function Orders() {
     }
 
     setDeletingId(confirmDeleteOrder.id);
-    setErrorMessage(null);
+    /* toast clears automatically */
 
     const response = await erpService.deleteOrder(confirmDeleteOrder.id);
     if (response.ok) {
@@ -890,7 +946,7 @@ export function Orders() {
         closeDetails();
       }
     } else {
-      setErrorMessage(response.error ?? t('Unable to delete order'));
+      showToast(response.error ?? t('Unable to delete order'));
     }
 
     setDeletingId(null);
@@ -899,15 +955,15 @@ export function Orders() {
 
   const requestDelete = (order: OrderModel) => {
     if (!isAuthenticated || authLoading) {
-      setErrorMessage(t('Authenticate to manage orders.'));
+      showToast(t('Authenticate to manage orders.'), 'warning');
       return;
     }
     if (!canManageOrders) {
-      setErrorMessage(managementDeniedMessage);
+      showToast(managementDeniedMessage, 'warning');
       return;
     }
     if (order.id === undefined || order.id === null) {
-      setErrorMessage(t('Order id missing.'));
+      showToast(t('Order id missing.'));
       return;
     }
 
@@ -916,6 +972,11 @@ export function Orders() {
   };
 
   const addProduct = (product: ProductModel) => {
+    const stock = getStorageQuantity(product);
+    if (!product.isService && stock <= 0) {
+      showToast(t('{name} is out of stock.', { name: product.name ?? t('Product') }));
+      return;
+    }
     setSelectedItems((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
       if (existing) {
@@ -928,6 +989,13 @@ export function Orders() {
           const nextQuantity = allowDecimal
             ? currentQuantity + 1
             : Math.round(currentQuantity + 1);
+          if (!item.product.isService) {
+            const maxStock = getStorageQuantity(item.product);
+            if (nextQuantity > maxStock) {
+              showToast(t('Max stock: {stock}', { stock: String(maxStock) }), 'warning');
+              return item;
+            }
+          }
           return {
             ...item,
             quantity: String(Math.max(allowDecimal ? 0 : 1, nextQuantity)),
@@ -1006,12 +1074,22 @@ export function Orders() {
     [selectedItems],
   );
 
+  const getStockError = (item: SelectedOrderItem): string | null => {
+    if (item.product.isService) return null;
+    const stock = getStorageQuantity(item.product);
+    if (stock <= 0) return t('Out of Stock');
+    const qty = parseNumber(item.quantity);
+    if (qty !== null && qty > stock) return t('Max stock: {stock}', { stock: String(stock) });
+    return null;
+  };
+
   const hasLineItemErrors = useMemo(
     () =>
       selectedItems.some(
         (item) =>
           getQuantityError(item.quantity, item.product.unitOfMeasure) ||
-          getValueError(item.value),
+          getValueError(item.value) ||
+          getStockError(item),
       ),
     [selectedItems],
   );
@@ -1024,21 +1102,21 @@ export function Orders() {
       return;
     }
     if (!isAuthenticated || authLoading) {
-      setErrorMessage(t('Authenticate to manage orders.'));
+      showToast(t('Authenticate to manage orders.'), 'warning');
       return;
     }
     if (!enterpriseId) {
-      setErrorMessage(t('Enterprise not found for this user.'));
+      showToast(t('Enterprise not found for this user.'));
       return;
     }
 
     if (!selectedCustomer) {
-      setErrorMessage(t('Select a customer.'));
+      showToast(t('Select a customer.'));
       return;
     }
 
     if (selectedItems.length === 0) {
-      setErrorMessage(t('Add at least one product.'));
+      showToast(t('Add at least one product.'));
       return;
     }
 
@@ -1048,7 +1126,7 @@ export function Orders() {
     for (const item of selectedItems) {
       const quantityError = getQuantityError(item.quantity, item.product.unitOfMeasure);
       if (quantityError) {
-        setErrorMessage(
+        showToast(
           t('{name} quantity: {message}.', {
             name: item.product.name ?? t('Product'),
             message: t(quantityError),
@@ -1058,7 +1136,7 @@ export function Orders() {
       }
       const valueError = getValueError(item.value);
       if (valueError) {
-        setErrorMessage(
+        showToast(
           t('{name} value: {message}.', {
             name: item.product.name ?? t('Product'),
             message: t(valueError),
@@ -1069,12 +1147,32 @@ export function Orders() {
       const quantity = parseNumber(item.quantity);
       const value = parseNumber(item.value);
       if (quantity === null || value === null) {
-        setErrorMessage(
+        showToast(
           t('{name} has invalid quantity or value.', {
             name: item.product.name ?? t('Product'),
           }),
         );
         return;
+      }
+
+      if (!item.product.isService) {
+        const availableStock = getStorageQuantity(item.product);
+        if (availableStock <= 0) {
+          showToast(
+            t('{name} is out of stock.', { name: item.product.name ?? t('Product') }),
+          );
+          return;
+        }
+        if (quantity > availableStock) {
+          showToast(
+            t('{name} quantity ({qty}) exceeds available stock ({stock}).', {
+              name: item.product.name ?? t('Product'),
+              qty: String(quantity),
+              stock: String(availableStock),
+            }),
+          );
+          return;
+        }
       }
 
       const resolvedQuantity = quantity;
@@ -1092,7 +1190,7 @@ export function Orders() {
 
     const customer = resolveCustomerLabel(selectedCustomer);
     if (!customer) {
-      setErrorMessage(t('Customer name is required.'));
+      showToast(t('Customer name is required.'));
       return;
     }
 
@@ -1108,7 +1206,7 @@ export function Orders() {
     setOrderDateLabel(formatOrderDateTime(now));
 
     setCreating(true);
-    setErrorMessage(null);
+    /* toast clears automatically */
 
     const payload: OrderCreatePayload = {
       customer,
@@ -1152,7 +1250,7 @@ export function Orders() {
       setOrders((prev) => [hydratedOrder, ...prev]);
       closeCreate();
     } else {
-      setErrorMessage(response.error ?? t('Unable to create order'));
+      showToast(response.error ?? t('Unable to create order'));
     }
 
     setCreating(false);
@@ -1169,11 +1267,11 @@ export function Orders() {
     }
 
     if (!isAuthenticated || authLoading) {
-      setErrorMessage(t('Authenticate to manage orders.'));
+      showToast(t('Authenticate to manage orders.'), 'warning');
       return;
     }
     if (!canManageOrders) {
-      setErrorMessage(managementDeniedMessage);
+      showToast(managementDeniedMessage, 'warning');
       return;
     }
 
@@ -1204,16 +1302,16 @@ export function Orders() {
     }
 
     if (!isAuthenticated || authLoading) {
-      setErrorMessage(t('Authenticate to manage orders.'));
+      showToast(t('Authenticate to manage orders.'), 'warning');
       return;
     }
     if (!canManageOrders) {
-      setErrorMessage(managementDeniedMessage);
+      showToast(managementDeniedMessage, 'warning');
       return;
     }
 
     setStatusUpdating(true);
-    setErrorMessage(null);
+    /* toast clears automatically */
     try {
       const fullOrderResponse = await erpService.fetchOrderById(detailsOrder.id);
       const sourceOrder = fullOrderResponse.ok && fullOrderResponse.data
@@ -1236,7 +1334,7 @@ export function Orders() {
         .filter((item) => item.productId !== undefined && item.productId !== null);
 
       if (safeOrderedProduct.length === 0) {
-        setErrorMessage(t('Order must have Ordered Products.'));
+        showToast(t('Order must have Ordered Products.'));
         return;
       }
 
@@ -1298,12 +1396,51 @@ export function Orders() {
               : order,
           ),
         );
+
+        const refreshed = await erpService.fetchOrderById(payload.id);
+        if (refreshed.ok && refreshed.data) {
+          const fresh = refreshed.data;
+          setDetailsOrder((current) =>
+            current && String(current.id) === String(payload.id)
+              ? {
+                  ...current,
+                  ...fresh,
+                  status: nextStatus,
+                  payday: fresh.payday ?? current.payday,
+                  paymentDate: fresh.paymentDate ?? current.paymentDate,
+                }
+              : current,
+          );
+          setOrders((prev) =>
+            prev.map((order) =>
+              String(order.id) === String(payload.id)
+                ? {
+                    ...order,
+                    ...fresh,
+                    status: nextStatus,
+                    payday: fresh.payday ?? order.payday,
+                    paymentDate: fresh.paymentDate ?? order.paymentDate,
+                  }
+                : order,
+            ),
+          );
+        }
       } else {
-        setErrorMessage(response.error ?? t('Unable to update order status'));
+        showToast(response.error ?? t('Unable to update order status'));
       }
     } finally {
       setStatusUpdating(false);
     }
+  };
+
+  const badgeTone = (accent: string) => ({ text: accent, bg: `${accent}1A`, border: `${accent}40` });
+  const statusBadgeColors: Record<string, { text: string; bg: string; border: string }> = {
+    pending:    badgeTone(colors.accentOrange),
+    processing: badgeTone(colors.secondaryPurple),
+    paid:       badgeTone(colors.neonGreen),
+    shipped:    badgeTone(colors.neonGreen),
+    delivered:  badgeTone(colors.neonGreen),
+    finished:   badgeTone(colors.neonGreen),
   };
 
   const renderStatusOptions = (
@@ -1311,43 +1448,40 @@ export function Orders() {
     onSelect: (status: OrderStatusOption) => void,
     disabled = false,
   ) => (
-    <View style={[styles.statusOptions, isCompact && styles.statusOptionsCompact]}>
-      {orderStatusOptions.map((status) => {
-        const isSelected = selected === status;
-        return (
-          <Chip
-            key={status}
-            disabled={disabled}
-            selected={isSelected}
-            showSelectedCheck={false}
-            icon={
-              isSelected
-                ? ({ size }) => <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                : undefined
-            }
-            onPress={() => {
-              if (disabled) {
-                return;
-              }
-              onSelect(status);
-            }}
-            style={[
-              styles.statusOption,
-              {
-                borderColor: isSelected ? colors.primaryPurple : colors.cardBorder,
-                backgroundColor: isSelected ? colors.primaryPurple : colors.cardBgFrom,
-              },
-            ]}
-            textStyle={[
-              styles.statusOptionText,
-              { color: isSelected ? colors.neonGreen : colors.textSecondary },
-            ]}
-          >
-            {t(status)}
-          </Chip>
-        );
-      })}
-    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.statusPillRow}>
+        {orderStatusOptions.map((status) => {
+          const isActive = status === selected;
+          const key = status.toLowerCase();
+          const badgeColor = statusBadgeColors[key] ?? badgeTone(colors.textMuted);
+          return (
+            <Pressable
+              key={status}
+              onPress={() => !disabled && onSelect(status)}
+              style={(state: any) => [
+                styles.statusPill,
+                {
+                  backgroundColor: isActive ? badgeColor.bg : 'transparent',
+                  borderColor: isActive ? badgeColor.border : colors.cardBorder,
+                },
+                !isActive && state.hovered && { backgroundColor: `${badgeColor.bg}`, borderColor: badgeColor.border },
+                disabled && { opacity: 0.5 },
+              ]}
+            >
+              {isActive && <View style={[styles.statusPillDot, { backgroundColor: badgeColor.text }]} />}
+              <Text
+                style={[
+                  styles.statusPillText,
+                  { color: isActive ? badgeColor.text : colors.textMuted },
+                ]}
+              >
+                {t(status)}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </ScrollView>
   );
 
   const filteredOrders = orders.filter((order) => {
@@ -1388,32 +1522,14 @@ export function Orders() {
     return matchesSearch && matchesStatus && matchesDate && isActive;
   });
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Pending':
-        return colors.accentOrange;
-      case 'Processing':
-        return colors.primaryPurple;
-      case 'Paid':
-        return '#1ec28b';
-      case 'Shipped':
-        return '#4a9eff';
-      case 'Delivered':
-        return colors.neonGreen;
-      case 'Finished':
-        return '#9aa4ff';
-      default:
-        return colors.textMuted;
-    }
-  };
 
   if (loading) {
     return (
       <NervLoader
         variant="orders"
         fullScreen
-        label={t('Synchronizing EVA-01')}
-        subtitle={t('LCL circulation nominal | Loading orders...')}
+        label={t('Loading')}
+        subtitle={t('Fetching order data...')}
       />
     );
   }
@@ -1421,7 +1537,6 @@ export function Orders() {
   const effectiveWidth = contentWidth > 0 ? contentWidth : width;
   const useCardLayout = effectiveWidth < 980;
   const useDenseMobileLayout = effectiveWidth < 420;
-  const orderTableMinWidth = effectiveWidth < 1280 ? 980 : 1080;
   const rowActionIconSize = useCardLayout ? (useDenseMobileLayout ? 22 : 24) : 16;
 
   return (
@@ -1437,14 +1552,64 @@ export function Orders() {
           }}
         >
           {/* Header */}
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-              {t('ORDER TRACKING')}
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-              {t('Monitor and manage customer orders')}
-            </Text>
-            <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
+          <View style={[styles.header, !isCompact && styles.headerRow]}>
+            <View>
+              <Text style={[styles.title, { color: colors.textPrimary }, isCompact && styles.titleCompact]}>
+                {t('Orders')}
+              </Text>
+              <Text style={[styles.subtitle, { color: colors.textMuted }, isCompact && styles.subtitleCompact]}>
+                {t('Purchase & sales order management')}
+              </Text>
+            </View>
+            {!isCompact && (
+              <View style={styles.headerActions}>
+                <Pressable
+                  onPress={() => setFilterPanelOpen((prev) => !prev)}
+                  style={(state: any) => [
+                    styles.filterBtn,
+                    {
+                      borderColor: filterPanelOpen ? colors.primaryPurple : (hasDateFilter ? `${colors.primaryPurple}40` : colors.cardBorder),
+                      backgroundColor: filterPanelOpen ? `${colors.primaryPurple}0C` : 'transparent',
+                    },
+                    state.hovered && { backgroundColor: filterPanelOpen ? `${colors.primaryPurple}18` : 'rgba(255,255,255,0.05)' },
+                  ]}
+                >
+                  {(state: any) => (
+                    <>
+                      <Feather
+                        name="filter"
+                        size={14}
+                        color={filterPanelOpen || hasDateFilter ? colors.primaryPurple : (state.hovered ? colors.textPrimary : colors.textMuted)}
+                      />
+                      <Text
+                        style={[
+                          styles.filterBtnText,
+                          { color: filterPanelOpen || hasDateFilter ? colors.primaryPurple : (state.hovered ? colors.textPrimary : colors.textMuted) },
+                        ]}
+                      >
+                        {t('Filter')}
+                      </Text>
+                      {hasDateFilter && (
+                        <View style={[styles.filterActiveDot, { backgroundColor: colors.primaryPurple }]} />
+                      )}
+                    </>
+                  )}
+                </Pressable>
+                {canManageOrders && (
+                  <Button
+                    mode="contained"
+                    onPress={openCreate}
+                    icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
+                    buttonColor={colors.primaryPurple}
+                    textColor="#fff"
+                    style={styles.headerBtn}
+                    contentStyle={styles.headerBtnContent}
+                  >
+                    {t('New Order')}
+                  </Button>
+                )}
+              </View>
+            )}
           </View>
 
           {!isAuthenticated && !authLoading && (
@@ -1455,11 +1620,56 @@ export function Orders() {
             </View>
           )}
 
-          {errorMessage && (
-            <View style={[styles.banner, { backgroundColor: `${colors.accentOrange}20`, borderColor: colors.accentOrange }]}>
-              <Text style={[styles.bannerText, { color: colors.accentOrange }]}>{errorMessage}</Text>
-            </View>
-          )}
+          {/* Search and Actions */}
+          <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
+            <Searchbar
+              placeholder={t('Search orders...')}
+              value={searchTerm}
+              onChangeText={setSearchTerm}
+              style={[styles.searchBar, { backgroundColor: colors.inputBgFrom, borderColor: colors.cardBorder }]}
+              iconColor={colors.textMuted}
+              inputStyle={[styles.searchInput, { color: colors.textPrimary }]}
+              placeholderTextColor={colors.textMuted}
+              elevation={0}
+            />
+            {isCompact && (
+              <View style={styles.compactActionRow}>
+                <Pressable
+                  onPress={() => setFilterPanelOpen((prev) => !prev)}
+                  style={(state: any) => [
+                    styles.filterBtn,
+                    {
+                      borderColor: filterPanelOpen ? colors.primaryPurple : (hasDateFilter ? `${colors.primaryPurple}40` : colors.cardBorder),
+                      backgroundColor: filterPanelOpen ? `${colors.primaryPurple}0C` : 'transparent',
+                    },
+                    state.hovered && { backgroundColor: filterPanelOpen ? `${colors.primaryPurple}18` : 'rgba(255,255,255,0.05)' },
+                  ]}
+                >
+                  <Feather name="filter" size={14} color={filterPanelOpen || hasDateFilter ? colors.primaryPurple : colors.textMuted} />
+                  <Text style={[styles.filterBtnText, { color: filterPanelOpen || hasDateFilter ? colors.primaryPurple : colors.textMuted }]}>
+                    {t('Filter')}
+                  </Text>
+                  {hasDateFilter && (
+                    <View style={[styles.filterActiveDot, { backgroundColor: colors.primaryPurple }]} />
+                  )}
+                </Pressable>
+                {canManageOrders && (
+                  <Button
+                    mode="contained"
+                    onPress={() => setCreateVisible(true)}
+                    disabled={!isAuthenticated || authLoading}
+                    icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
+                    buttonColor={colors.primaryPurple}
+                    textColor="#fff"
+                    style={[styles.addButton, (!isAuthenticated || authLoading) && styles.buttonDisabled]}
+                    contentStyle={styles.addButtonContent}
+                  >
+                    {t('New Order')}
+                  </Button>
+                )}
+              </View>
+            )}
+          </View>
 
           {!loading && filteredOrders.length === 0 && (
             <View style={[styles.emptyState, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
@@ -1471,157 +1681,151 @@ export function Orders() {
             </View>
           )}
 
-            {/* Status Filters */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
+          {/* Status Tabs */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabBarScroll}>
+            <View style={[styles.tabBar, { backgroundColor: `${colors.cardBgFrom}80` }]}>
               {statuses.map((status) => {
                 const isSelected = filterStatus === status;
+                const label = status === 'all' ? t('All') : t(status.charAt(0).toUpperCase() + status.slice(1));
                 return (
-                  <Chip
+                  <Pressable
                     key={status}
-                    selected={isSelected}
-                    showSelectedCheck={false}
-                    icon={
-                      isSelected
-                        ? ({ size }) => (
-                            <Feather
-                              name="check"
-                              size={Math.max(12, size - 2)}
-                              color={colors.neonGreen}
-                            />
-                          )
-                        : undefined
-                    }
                     onPress={() => setFilterStatus(status)}
-                    style={[
-                      styles.filterButton,
-                      {
-                        backgroundColor: isSelected ? colors.primaryPurple : colors.cardBgFrom,
-                        borderColor: isSelected ? colors.primaryPurple : colors.cardBorder,
-                      },
-                    ]}
-                    textStyle={[
-                      styles.filterText,
-                      { color: isSelected ? colors.neonGreen : colors.textSecondary },
+                    style={(state: any) => [
+                      styles.tabItem,
+                      isSelected && [{ backgroundColor: colors.cardBgFrom }, styles.tabItemActive],
+                      !isSelected && state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
                     ]}
                   >
-                    {status === 'all' ? t('All') : t(status.charAt(0).toUpperCase() + status.slice(1))}
-                  </Chip>
+                    {(state: any) => (
+                      <Text style={[styles.tabLabel, { color: isSelected ? colors.textPrimary : (state.hovered ? colors.textPrimary : colors.textMuted) }]}>
+                        {label}
+                      </Text>
+                    )}
+                  </Pressable>
                 );
               })}
-            </ScrollView>
+            </View>
+          </ScrollView>
 
-          <View
-            style={[
-              styles.dateFilterCard,
-              { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-              isCompact && styles.dateFilterCardCompact,
-            ]}
-          >
-            <View style={styles.dateFilterHeader}>
-              <View>
-                <Text style={[styles.dateFilterLabel, { color: colors.textMuted }]}>
+          {filterPanelOpen && (
+            <View style={[styles.filterPanel, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+              <View style={styles.filterPanelLabelRow}>
+                <Feather name="calendar" size={14} color={colors.primaryPurple} />
+                <Text style={[styles.filterPanelLabel, { color: colors.textSecondary }]}>
                   {t('Date Range')}
                 </Text>
-                <Text style={[styles.dateRangeSummary, { color: colors.textSecondary }]}>
-                  {startDateFilter || endDateFilter
-                    ? `${formatDateLabel(startDateFilter ?? endDateFilter)} - ${formatDateLabel(endDateFilter ?? startDateFilter)}`
-                    : t('Any time')}
-                </Text>
               </View>
-                <View style={styles.dateFilterHeaderActions}>
-                  <Button
-                    mode="contained"
-                    onPress={openDatePicker}
-                    icon={({ size }) => <Feather name="calendar" size={size} color={colors.neonGreen} />}
-                    buttonColor={colors.primaryPurple}
-                    textColor={colors.appBg}
-                    style={styles.dateFilterActionPrimary}
-                    contentStyle={styles.dateFilterActionContent}
-                    labelStyle={styles.compactControlLabel}
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.presetRow}>
+                <View style={styles.presetPills}>
+                  {datePresets.map((preset) => {
+                    const isActive = activePresetLabel === preset.label;
+                    return (
+                      <Pressable
+                        key={preset.label}
+                        onPress={() => {
+                          setStartDateFilter(preset.start);
+                          setEndDateFilter(preset.end);
+                          setPageNumber(1);
+                        }}
+                        style={(state: any) => [
+                          styles.presetPill,
+                          { borderColor: isActive ? colors.primaryPurple : colors.cardBorder },
+                          isActive && { backgroundColor: `${colors.primaryPurple}18` },
+                          !isActive && state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: `${colors.primaryPurple}40` },
+                        ]}
+                      >
+                        <Text style={[styles.presetPillText, { color: isActive ? colors.primaryPurple : colors.textSecondary }]}>
+                          {preset.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+
+              <View style={[styles.filterPanelRow, isCompact && styles.filterPanelRowCompact]}>
+                <View style={[styles.filterDateDisplay, { backgroundColor: colors.inputBgFrom, borderColor: hasDateFilter ? `${colors.primaryPurple}40` : colors.cardBorder }]}>
+                  <Feather name="calendar" size={14} color={hasDateFilter ? colors.primaryPurple : colors.textMuted} />
+                  <Text
+                    style={[
+                      styles.filterDateText,
+                      { color: hasDateFilter ? colors.textPrimary : colors.textMuted },
+                    ]}
                   >
-                    {t('Pick range')}
-                  </Button>
-                  {(startDateFilter || endDateFilter) && (
-                    <Button
-                      mode="outlined"
+                    {hasDateFilter
+                      ? `${formatDateLabel(startDateFilter ?? endDateFilter)} — ${formatDateLabel(endDateFilter ?? startDateFilter)}`
+                      : t('All dates')}
+                  </Text>
+                </View>
+                <View style={styles.filterPanelActions}>
+                  <Pressable
+                    onPress={openDatePicker}
+                    style={(state: any) => [
+                      styles.filterPanelBtn,
+                      { borderColor: `${colors.primaryPurple}40`, backgroundColor: `${colors.primaryPurple}08` },
+                      state.hovered && { backgroundColor: `${colors.primaryPurple}18` },
+                    ]}
+                  >
+                    <Feather name="calendar" size={14} color={colors.primaryPurple} />
+                    <Text style={[styles.filterPanelBtnText, { color: colors.primaryPurple }]}>
+                      {hasDateFilter ? t('Change') : t('Custom range')}
+                    </Text>
+                  </Pressable>
+                  {hasDateFilter && (
+                    <Pressable
                       onPress={clearDateFilter}
-                      textColor={colors.textSecondary}
-                      style={[styles.dateFilterActionGhost, { borderColor: colors.cardBorder }]}
-                      contentStyle={styles.dateFilterActionContent}
-                      labelStyle={styles.compactControlLabel}
+                      style={(state: any) => [
+                        styles.filterPanelBtn,
+                        { borderColor: colors.cardBorder },
+                        state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
+                      ]}
                     >
-                      {t('Clear')}
-                    </Button>
+                      <Feather name="x" size={14} color={colors.textMuted} />
+                      <Text style={[styles.filterPanelBtnText, { color: colors.textMuted }]}>
+                        {t('Clear')}
+                      </Text>
+                    </Pressable>
                   )}
                 </View>
+              </View>
             </View>
+          )}
+
+          <View style={[styles.paginationRow, isCompact && styles.paginationRowCompact]}>
+            <Button
+              mode="outlined"
+              onPress={goPrevPage}
+              disabled={pageNumber === 1}
+              icon={({ size }) => <Feather name="chevron-left" size={size} color={colors.textMuted} />}
+              textColor={colors.textMuted}
+              style={[
+                styles.paginationButton,
+                { borderColor: colors.cardBorder },
+                pageNumber === 1 && styles.paginationButtonDisabled,
+              ]}
+              contentStyle={styles.paginationButtonContent}
+            >
+              {t('Prev')}
+            </Button>
+            <Text style={[styles.pageIndicator, { color: colors.textPrimary }]}>{t('Page {page}', { page: pageNumber })}</Text>
+            <Button
+              mode="outlined"
+              onPress={goNextPage}
+              disabled={!hasMore}
+              icon={({ size }) => <Feather name="chevron-right" size={size} color={colors.textMuted} />}
+              textColor={colors.textMuted}
+              style={[
+                styles.paginationButton,
+                { borderColor: colors.cardBorder },
+                !hasMore && styles.paginationButtonDisabled,
+              ]}
+              contentStyle={styles.paginationButtonContent}
+            >
+              {t('Next')}
+            </Button>
           </View>
-
-            {/* Search and Add */}
-            <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
-              <Searchbar
-                placeholder={t('Search orders...')}
-                value={searchTerm}
-                onChangeText={setSearchTerm}
-                style={[styles.searchBar, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-                iconColor={colors.primaryPurple}
-                inputStyle={[styles.searchInput, { color: colors.textPrimary }]}
-                placeholderTextColor={colors.textMuted}
-              />
-              <Button
-                mode="contained"
-                onPress={openCreate}
-                disabled={!isAuthenticated || authLoading}
-                icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
-                buttonColor={colors.primaryPurple}
-                textColor={colors.appBg}
-                style={[
-                  styles.addButton,
-                  isCompact && styles.addButtonCompact,
-                  (!isAuthenticated || authLoading) && styles.buttonDisabled,
-                ]}
-                contentStyle={[styles.addButtonContent, isCompact && styles.addButtonContentCompact]}
-                labelStyle={[styles.addButtonLabel, styles.compactControlLabel]}
-              >
-                {t('Add')}
-              </Button>
-            </View>
-
-            <View style={[styles.paginationRow, isCompact && styles.paginationRowCompact]}>
-              <Button
-                mode="outlined"
-                onPress={goPrevPage}
-                disabled={pageNumber === 1}
-                icon={({ size }) => <Feather name="chevron-left" size={size} color={colors.textSecondary} />}
-                textColor={colors.textSecondary}
-                style={[
-                  styles.paginationButton,
-                  { borderColor: colors.cardBorder },
-                  pageNumber === 1 && styles.paginationButtonDisabled,
-                ]}
-                contentStyle={styles.paginationButtonContent}
-                labelStyle={styles.compactControlLabel}
-              >
-                {t('Prev')}
-              </Button>
-              <Text style={[styles.pageIndicator, { color: colors.textPrimary }]}>{t('Page {page}', { page: pageNumber })}</Text>
-              <Button
-                mode="outlined"
-                onPress={goNextPage}
-                disabled={!hasMore}
-                icon={({ size }) => <Feather name="chevron-right" size={size} color={colors.textSecondary} />}
-                textColor={colors.textSecondary}
-                style={[
-                  styles.paginationButton,
-                  { borderColor: colors.cardBorder },
-                  !hasMore && styles.paginationButtonDisabled,
-                ]}
-                contentStyle={styles.paginationButtonContent}
-                labelStyle={styles.compactControlLabel}
-              >
-                {t('Next')}
-              </Button>
-            </View>
 
           {/* Order List */}
           {useCardLayout ? (
@@ -1661,23 +1865,13 @@ export function Orders() {
                               styles.orderId,
                               styles.orderIdMobile,
                               useDenseMobileLayout && styles.orderIdMobileDense,
-                              { color: colors.neonGreen },
+                              { color: colors.primaryPurple },
                             ]}
                           >
                             #{safeId}
                           </Text>
                         </View>
-                        <View
-                          style={[
-                            styles.statusBadge,
-                            styles.statusBadgeCompact,
-                            { backgroundColor: `${getStatusColor(safeStatus)}18` },
-                          ]}
-                        >
-                          <Text style={[styles.statusText, styles.statusTextCompact, { color: getStatusColor(safeStatus) }]}>
-                            {t(safeStatus)}
-                          </Text>
-                        </View>
+                        <StatusBadge status={safeStatus.toLowerCase()} label={t(safeStatus)} />
                       </View>
                     </View>
 
@@ -1803,172 +1997,92 @@ export function Orders() {
                 { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
               ]}
             >
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.orderTableScrollContent}>
-                <View style={[styles.orderTable, { minWidth: orderTableMinWidth }]}>
-                <View
-                  style={[
-                    styles.orderTableHeader,
-                    { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-                  ]}
-                >
-                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableOrderColumn]}>
-                    {t('Order')}
-                  </Text>
-                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableCustomerColumn]}>
-                    {t('Customer')}
-                  </Text>
-                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableTimelineColumn]}>
-                    {t('Timeline')}
-                  </Text>
-                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableItemsColumn]}>
-                    {t('Items')}
-                  </Text>
-                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableTotalColumn]}>
-                    {t('Total')}
-                  </Text>
-                  <Text style={[styles.orderTableHeadText, { color: colors.textMuted }, styles.orderTableActionsColumn]}>
-                    {t('Actions')}
-                  </Text>
-                </View>
+              {/* Table Header */}
+              <View
+                style={[
+                  styles.orderTableHeader,
+                  { borderBottomColor: colors.cardBorder },
+                ]}
+              >
+                <Text style={[styles.orderTableHeadText, styles.colOrderId, { color: colors.textMuted }]}>
+                  {t('Order ID')}
+                </Text>
+                <Text style={[styles.orderTableHeadText, styles.colCustomer, { color: colors.textMuted }]}>
+                  {t('Customer')}
+                </Text>
+                <Text style={[styles.orderTableHeadText, styles.colItems, { color: colors.textMuted }]}>
+                  {t('Items')}
+                </Text>
+                <Text style={[styles.orderTableHeadText, styles.colTotal, { color: colors.textMuted }]}>
+                  {t('Total')}
+                </Text>
+                <Text style={[styles.orderTableHeadText, styles.colStatus, { color: colors.textMuted }]}>
+                  {t('Status')}
+                </Text>
+                <Text style={[styles.orderTableHeadText, styles.colDate, { color: colors.textMuted }]}>
+                  {t('Date')}
+                </Text>
+              </View>
 
-                <View style={styles.orderList}>
-                  {filteredOrders.map((order) => {
-                    const safeId = order.id ?? '-';
-                    const safeStatus = resolveStatusOption(order.status);
-                    const safeCustomer = resolveOrderCustomerName(order);
-                    const safeDate = formatOrderDateTime(resolveOrderDateSource(order));
-                    const safeScheduledPaymentDate = resolveOrderScheduledPaymentDateSource(order);
-                    const safePayday = resolveOrderPaydaySource(order);
-                    const showPaidAt = shouldShowPaidAt(safeStatus);
-                    const safeItems = resolveOrderItems(order);
-                    const safeTotal =
-                      typeof order.totalValue === 'number'
-                        ? order.totalValue
-                        : typeof order.total === 'number'
-                          ? order.total
-                          : 0;
-                    const isDeleting = deletingId === order.id;
+              {/* Table Rows */}
+              {filteredOrders.map((order, index) => {
+                const safeId = order.id ?? '-';
+                const safeStatus = resolveStatusOption(order.status);
+                const safeCustomer = resolveOrderCustomerName(order);
+                const safeDate = formatOrderDate(resolveOrderDateSource(order));
+                const safeItems = resolveOrderItems(order);
+                const safeTotal =
+                  typeof order.totalValue === 'number'
+                    ? order.totalValue
+                    : typeof order.total === 'number'
+                      ? order.total
+                      : 0;
+                const isLast = index === filteredOrders.length - 1;
 
-                    return (
-                      <View
-                        key={safeId}
-                        style={[
-                          styles.orderTableRow,
-                          { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-                        ]}
-                      >
-                        <View style={[styles.orderTableCell, styles.orderTableOrderColumn]}>
-                          <Text style={[styles.orderLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
-                          <Text style={[styles.orderId, { color: colors.neonGreen }]}>#{safeId}</Text>
-                          <View
-                            style={[
-                              styles.statusBadge,
-                              { backgroundColor: `${getStatusColor(safeStatus)}18` },
-                            ]}
-                          >
-                            <Text style={[styles.statusText, { color: getStatusColor(safeStatus) }]}>
-                              {t(safeStatus)}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={[styles.orderTableCell, styles.orderTableCustomerColumn]}>
-                          <View style={styles.tableMetaRow}>
-                            <View style={[styles.tableIconBadge, { backgroundColor: `${colors.primaryPurple}14` }]}>
-                              <Feather name="user" size={14} color={colors.primaryPurple} />
-                            </View>
-                            <View style={styles.tableMetaContent}>
-                              <Text style={[styles.tableMetaTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                                {safeCustomer}
-                              </Text>
-                              <Text style={[styles.tableMetaSubtitle, { color: colors.textMuted }]}>
-                                {t('Customer')}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-
-                        <View style={[styles.orderTableCell, styles.orderTableTimelineColumn]}>
-                          <View style={styles.orderTimeline}>
-                            <View style={styles.timelineRow}>
-                              <Feather name="calendar" size={14} color={colors.primaryPurple} />
-                              <Text style={[styles.timelineText, { color: colors.textSecondary }]} numberOfLines={1}>
-                                {safeDate}
-                              </Text>
-                            </View>
-                            <View style={styles.timelineRow}>
-                              <Feather name="clock" size={14} color={colors.primaryPurple} />
-                              <Text style={[styles.timelineText, { color: colors.textSecondary }]} numberOfLines={1}>
-                                {safeScheduledPaymentDate
-                                  ? t('Pay on {date}', { date: formatOrderDateTime(safeScheduledPaymentDate) })
-                                  : t('Payment not scheduled')}
-                              </Text>
-                            </View>
-                            {showPaidAt && (
-                              <View style={styles.timelineRow}>
-                                <Feather name="check-circle" size={14} color={colors.neonGreen} />
-                                <Text style={[styles.timelineText, { color: colors.textSecondary }]} numberOfLines={1}>
-                                  {t('Paid at')}: {safePayday ? formatOrderDateTime(safePayday) : '-'}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        </View>
-
-                        <View style={[styles.orderTableCell, styles.orderTableItemsColumn]}>
-                          <View style={[styles.metricPill, { backgroundColor: `${colors.textMuted}12` }]}>
-                            <Feather name="package" size={14} color={colors.textMuted} />
-                            <Text style={[styles.metricPillText, { color: colors.textSecondary }]}>
-                              {t('{count} items', { count: safeItems })}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={[styles.orderTableCell, styles.orderTableTotalColumn]}>
-                          <Text style={[styles.orderTotalLabel, { color: colors.textMuted }]}>{t('Amount')}</Text>
-                          <Text style={[styles.orderTotal, { color: colors.textPrimary }]}>
-                            {formatCurrency(safeTotal, currency)}
-                          </Text>
-                        </View>
-
-                        <View style={[styles.orderTableCell, styles.orderTableActionsColumn]}>
-                          <View style={styles.actionIconRow}>
-                            <IconButton
-                              icon={() => <Feather name="eye" size={rowActionIconSize} color={colors.textPrimary} />}
-                              size={rowActionIconSize}
-                              onPress={() => openDetails(order)}
-                              disabled={isDeleting}
-                              testID={`order-view-${safeId}`}
-                              style={[
-                                styles.actionIconButton,
-                                { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom },
-                                isDeleting && styles.actionButtonDisabled,
-                              ]}
-                              accessibilityLabel={t('View Details')}
-                            />
-                            {canManageOrders && (
-                              <IconButton
-                                icon={() => <Feather name="trash-2" size={rowActionIconSize} color={colors.accentOrange} />}
-                                size={rowActionIconSize}
-                                onPress={() => requestDelete(order)}
-                                disabled={isDeleting}
-                                testID={`order-delete-${safeId}`}
-                                style={[
-                                  styles.actionIconButton,
-                                  { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom },
-                                  isDeleting && styles.actionButtonDisabled,
-                                ]}
-                                accessibilityLabel={isDeleting ? t('Deleting...') : t('Delete')}
-                              />
-                            )}
-                          </View>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-                </View>
-              </ScrollView>
+                return (
+                  <Pressable
+                    key={safeId}
+                    onPress={() => openDetails(order)}
+                    style={(state: any) => [
+                      styles.orderTableRow,
+                      !isLast && { borderBottomWidth: 1, borderBottomColor: colors.cardBorder },
+                      state.hovered && { backgroundColor: 'rgba(255,255,255,0.02)' },
+                    ]}
+                  >
+                    <Text
+                      style={[styles.colOrderId, styles.colOrderIdText, { color: colors.primaryPurple }]}
+                      numberOfLines={1}
+                    >
+                      {String(safeId)}
+                    </Text>
+                    <Text
+                      style={[styles.colCustomer, styles.colCustomerText, { color: colors.textPrimary }]}
+                      numberOfLines={1}
+                    >
+                      {safeCustomer}
+                    </Text>
+                    <Text
+                      style={[styles.colItems, styles.colItemsText, { color: colors.textMuted }]}
+                    >
+                      {safeItems}
+                    </Text>
+                    <Text
+                      style={[styles.colTotal, styles.colTotalText, { color: colors.textPrimary }]}
+                    >
+                      {formatCurrency(safeTotal, currency)}
+                    </Text>
+                    <View style={styles.colStatus}>
+                      <StatusBadge status={safeStatus.toLowerCase()} label={t(safeStatus)} />
+                    </View>
+                    <Text
+                      style={[styles.colDate, styles.colDateText, { color: colors.textMuted }]}
+                      numberOfLines={1}
+                    >
+                      {safeDate}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
           )}
         </View>
@@ -2077,14 +2191,8 @@ export function Orders() {
                   </Text>
                 </View>
               )}
-              {errorMessage && (
-                <View style={[styles.banner, { backgroundColor: `${colors.accentOrange}20`, borderColor: colors.accentOrange }]}>
-                  <Text style={[styles.bannerText, { color: colors.accentOrange }]}>{errorMessage}</Text>
-                </View>
-              )}
-
                 <View style={styles.modalField}>
-                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Customer')}</Text>
+                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Customer')} <Text style={{ color: '#ff4d7d', fontWeight: '700' }}>*</Text></Text>
                   <TouchableRipple
                     style={[
                       styles.dropdownHeader,
@@ -2205,58 +2313,87 @@ export function Orders() {
 
               <View style={styles.modalField}>
                 <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Order date')}</Text>
-                <View style={[styles.metaRow, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
-                  <Text style={[styles.metaValue, { color: colors.textPrimary }]}>
-                    {orderDateLabel || formatOrderDateTime(new Date())}
-                  </Text>
-                  <Text style={[styles.metaHint, { color: colors.textMuted }]}>{t('Auto-set')}</Text>
+                <View style={[styles.datePickerCard, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
+                  <View style={styles.datePickerCardContent}>
+                    <View style={[styles.datePickerIconBox, { backgroundColor: `${colors.neonGreen}14` }]}>
+                      <Feather name="calendar" size={16} color={colors.neonGreen} />
+                    </View>
+                    <View style={styles.datePickerInfo}>
+                      <Text style={[styles.datePickerDateText, { color: colors.textPrimary }]}>
+                        {orderDateLabel || formatOrderDateTime(new Date())}
+                      </Text>
+                      <Text style={[styles.datePickerHint, { color: colors.textMuted }]}>{t('Auto-set on creation')}</Text>
+                    </View>
+                  </View>
                 </View>
               </View>
 
               <View style={styles.modalField}>
-                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Payment scheduled')}</Text>
-                <View style={[styles.metaRow, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
-                  <Text
-                    style={[
-                      styles.metaValue,
-                      { color: scheduledPaymentDate ? colors.textPrimary : colors.textMuted },
-                    ]}
-                  >
-                    {scheduledPaymentDate ? formatDateLabel(scheduledPaymentDate) : t('Not scheduled')}
-                  </Text>
-                  <Button
-                    mode="outlined"
-                    onPress={openPaymentDatePicker}
-                    disabled={creating}
-                    textColor={colors.textSecondary}
-                    style={[styles.clearButton, { borderColor: colors.cardBorder }]}
-                    contentStyle={styles.clearButtonContent}
-                  >
-                    {scheduledPaymentDate ? t('Change') : t('Pick date')}
-                  </Button>
+                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Payment scheduled')} <Text style={{ color: '#ff4d7d', fontWeight: '700' }}>*</Text></Text>
+                <View style={[styles.datePickerCard, { borderColor: scheduledPaymentDate ? `${colors.primaryPurple}40` : colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
+                  <View style={styles.datePickerCardContent}>
+                    <View style={[styles.datePickerIconBox, { backgroundColor: scheduledPaymentDate ? `${colors.primaryPurple}14` : `${colors.textMuted}12` }]}>
+                      <Feather name="clock" size={16} color={scheduledPaymentDate ? colors.primaryPurple : colors.textMuted} />
+                    </View>
+                    <View style={styles.datePickerInfo}>
+                      <Text
+                        style={[
+                          styles.datePickerDateText,
+                          { color: scheduledPaymentDate ? colors.textPrimary : colors.textMuted },
+                        ]}
+                      >
+                        {scheduledPaymentDate ? formatDateLabel(scheduledPaymentDate) : t('Not scheduled')}
+                      </Text>
+                      <Text style={[styles.datePickerHint, { color: colors.textMuted }]}>
+                        {scheduledPaymentDate ? t('Scheduled payment date') : t('Tap to pick a date')}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.datePickerActions}>
+                    <Pressable
+                      onPress={openPaymentDatePicker}
+                      disabled={creating}
+                      style={(state: any) => [
+                        styles.datePickerBtn,
+                        { borderColor: `${colors.primaryPurple}40`, backgroundColor: `${colors.primaryPurple}08` },
+                        state.hovered && { backgroundColor: `${colors.primaryPurple}18` },
+                        creating && { opacity: 0.5 },
+                      ]}
+                    >
+                      <Feather name="calendar" size={13} color={colors.primaryPurple} />
+                      <Text style={[styles.datePickerBtnText, { color: colors.primaryPurple }]}>
+                        {scheduledPaymentDate ? t('Change') : t('Pick date')}
+                      </Text>
+                    </Pressable>
+                    {scheduledPaymentDate && (
+                      <Pressable
+                        onPress={clearScheduledPaymentDate}
+                        disabled={creating}
+                        style={(state: any) => [
+                          styles.datePickerBtn,
+                          { borderColor: colors.cardBorder },
+                          state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
+                          creating && { opacity: 0.5 },
+                        ]}
+                      >
+                        <Feather name="x" size={13} color={colors.textMuted} />
+                        <Text style={[styles.datePickerBtnText, { color: colors.textMuted }]}>
+                          {t('Clear')}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
                 </View>
-                {scheduledPaymentDate && (
-                  <Button
-                    mode="outlined"
-                    onPress={clearScheduledPaymentDate}
-                    disabled={creating}
-                    textColor={colors.textSecondary}
-                    style={[styles.clearButton, { borderColor: colors.cardBorder }]}
-                    contentStyle={styles.clearButtonContent}
-                  >
-                    {t('Clear')}
-                  </Button>
-                )}
               </View>
 
               <View style={styles.modalField}>
-                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Status')}</Text>
+                <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>{t('Status')} <Text style={{ color: '#ff4d7d', fontWeight: '700' }}>*</Text></Text>
                 {renderStatusOptions(createStatus, setCreateStatus)}
               </View>
 
                 <View style={styles.modalField}>
                   <View style={styles.sectionHeader}>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('Products')}</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('Products')} <Text style={{ color: '#ff4d7d', fontWeight: '700' }}>*</Text></Text>
                     <Text style={[styles.sectionMeta, { color: colors.textMuted }]}>
                       {t('{count} selected', { count: selectedItems.length })}
                     </Text>
@@ -2321,32 +2458,42 @@ export function Orders() {
                           filteredProducts.map((product) => {
                             const defaultValue = resolveProductValue(product);
                             const isSelected = selectedItems.some((item) => item.product.id === product.id);
+                            const stock = getStorageQuantity(product);
+                            const isOutOfStock = !product.isService && stock <= 0;
                             return (
                               <TouchableRipple
                                 key={product.id}
                                 style={[
                                   styles.selectorItem,
                                   {
-                                    borderColor: isSelected ? colors.neonGreen : colors.cardBorder,
-                                    backgroundColor: isSelected ? `${colors.neonGreen}12` : 'transparent',
+                                    borderColor: isSelected ? colors.neonGreen : isOutOfStock ? `${colors.destructive}40` : colors.cardBorder,
+                                    backgroundColor: isSelected ? `${colors.neonGreen}12` : isOutOfStock ? `${colors.destructive}0a` : 'transparent',
                                   },
+                                  isOutOfStock && { opacity: 0.55 },
                                 ]}
-                                onPress={() => addProduct(product)}
-                                disabled={creating}
+                                onPress={() => !isOutOfStock && addProduct(product)}
+                                disabled={creating || isOutOfStock}
                                 rippleColor={`${colors.neonGreen}1f`}
                               >
                                 <View style={styles.selectorContent}>
                                   <View style={styles.selectorInfo}>
-                                    <Text style={[styles.selectorTitle, { color: colors.textPrimary }]}>
+                                    <Text style={[styles.selectorTitle, { color: isOutOfStock ? colors.textMuted : colors.textPrimary }]}>
                                       {product.name ?? t('Unnamed product')}
                                     </Text>
                                     <Text style={[styles.selectorSubtitle, { color: colors.textMuted }]}>
                                       {formatCurrency(defaultValue, currency)}
+                                      {!product.isService && ` · ${t('Stock')}: ${stock}`}
                                     </Text>
                                   </View>
-                                  <Text style={[styles.selectorAction, { color: colors.neonGreen }]}>
-                                    {isSelected ? t('Added') : t('Add')}
-                                  </Text>
+                                  {isOutOfStock ? (
+                                    <Text style={[styles.selectorAction, { color: colors.destructive }]}>
+                                      {t('Out of Stock')}
+                                    </Text>
+                                  ) : (
+                                    <Text style={[styles.selectorAction, { color: colors.neonGreen }]}>
+                                      {isSelected ? t('Added') : t('Add')}
+                                    </Text>
+                                  )}
                                 </View>
                               </TouchableRipple>
                             );
@@ -2367,6 +2514,7 @@ export function Orders() {
                       const lineValue = parseNumber(item.value) ?? 0;
                       const lineTotal = lineQuantity * lineValue;
                       const quantityError = getQuantityError(item.quantity, item.product.unitOfMeasure);
+                      const stockError = getStockError(item);
                       const valueError = getValueError(item.value);
                       const allowDecimal = unitAllowsDecimal(item.product.unitOfMeasure);
                         return (
@@ -2375,9 +2523,16 @@ export function Orders() {
                             style={[styles.lineItemCard, { borderColor: colors.cardBorder }]}
                           >
                             <View style={styles.lineItemHeader}>
-                              <Text style={[styles.selectorTitle, { color: colors.textPrimary }]}>
-                                {item.product.name ?? t('Product')}
-                              </Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={[styles.selectorTitle, { color: colors.textPrimary }]}>
+                                  {item.product.name ?? t('Product')}
+                                </Text>
+                                {!item.product.isService && (
+                                  <Text style={[styles.selectorSubtitle, { color: stockError ? colors.destructive : colors.textMuted, fontSize: 11 }]}>
+                                    {t('Stock')}: {getStorageQuantity(item.product)}
+                                  </Text>
+                                )}
+                              </View>
                               <IconButton
                                 icon={() => <Feather name="trash-2" size={14} color={colors.accentOrange} />}
                                 size={18}
@@ -2398,12 +2553,12 @@ export function Orders() {
                                   onChangeText={(value) => updateLineItem(item.product.id, 'quantity', value)}
                                   keyboardType={allowDecimal ? 'decimal-pad' : 'numeric'}
                                   inputMode={allowDecimal ? 'decimal' : 'numeric'}
-                                  error={!!quantityError}
+                                  error={!!quantityError || !!stockError}
                                   editable={!creating}
                                   dense
                                 />
-                                <HelperText type="error" visible={!!quantityError} style={styles.lineItemHelper}>
-                                  {quantityError ?? ''}
+                                <HelperText type="error" visible={!!quantityError || !!stockError} style={styles.lineItemHelper}>
+                                  {quantityError ?? stockError ?? ''}
                                 </HelperText>
                               </View>
                               <View style={styles.lineItemField}>
@@ -2472,7 +2627,7 @@ export function Orders() {
                     onPress={handleCreate}
                     disabled={createDisabled}
                     buttonColor={colors.primaryPurple}
-                    textColor={colors.appBg}
+                    textColor="#fff"
                     style={styles.modalButton}
                     contentStyle={styles.modalButtonContent}
                     labelStyle={styles.modalButtonLabel}
@@ -2518,39 +2673,46 @@ export function Orders() {
                 contentContainerStyle={styles.detailsContent}
                 showsVerticalScrollIndicator={false}
               >
-                <View style={[styles.detailsSummary, { borderColor: colors.cardBorder }]}>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.neonGreen }]}>
-                      #{detailsOrder.id ?? '-'}
-                    </Text>
+                <View style={[styles.detailsHero, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}>
+                  <View style={styles.detailsHeroTop}>
+                    <View style={styles.detailsHeroIdBlock}>
+                      <Text style={[styles.detailsHeroLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
+                      <Text style={[styles.detailsHeroId, { color: colors.primaryPurple }]}>
+                        #{detailsOrder.id ?? '-'}
+                      </Text>
+                    </View>
+                    <StatusBadge status={resolveStatusOption(detailsOrder.status).toLowerCase()} label={t(resolveStatusOption(detailsOrder.status))} />
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Status')}</Text>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        isCompact && styles.statusBadgeCompact,
-                        { backgroundColor: `${getStatusColor(resolveStatusOption(detailsOrder.status))}20` },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.statusText,
-                          isCompact && styles.statusTextCompact,
-                          { color: getStatusColor(resolveStatusOption(detailsOrder.status)) },
-                        ]}
-                      >
-                        {t(resolveStatusOption(detailsOrder.status))}
+                  <View style={[styles.detailsHeroBottom, { borderTopColor: colors.cardBorder }]}>
+                    <View style={styles.detailsHeroStat}>
+                      <Text style={[styles.detailsHeroStatLabel, { color: colors.textMuted }]}>{t('Total')}</Text>
+                      <Text style={[styles.detailsHeroStatValue, { color: colors.textPrimary }]}>
+                        {formatCurrency(
+                          typeof detailsOrder.totalValue === 'number'
+                            ? detailsOrder.totalValue
+                            : typeof detailsOrder.total === 'number'
+                              ? detailsOrder.total
+                              : 0,
+                          currency,
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.detailsHeroStat}>
+                      <Text style={[styles.detailsHeroStatLabel, { color: colors.textMuted }]}>{t('Items')}</Text>
+                      <Text style={[styles.detailsHeroStatValue, { color: colors.textPrimary }]}>
+                        {resolveItemsFromOrderedProducts(detailsOrder)}
                       </Text>
                     </View>
                   </View>
                 </View>
 
                 <View style={[styles.detailsGrid, { borderColor: colors.cardBorder }]}>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Customer')}</Text>
-                    <View style={styles.detailsColumn}>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                      <Feather name="user" size={14} color={colors.primaryPurple} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Customer')}</Text>
                       <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
                         {detailsCustomer?.name ?? resolveOrderCustomerName(detailsOrder)}
                       </Text>
@@ -2561,54 +2723,59 @@ export function Orders() {
                       )}
                     </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Date')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {formatOrderDateTime(resolveOrderDateSource(detailsOrder))}
-                    </Text>
-                  </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Payment scheduled')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {resolveOrderScheduledPaymentDateSource(detailsOrder)
-                        ? formatOrderDateTime(resolveOrderScheduledPaymentDateSource(detailsOrder))
-                        : t('Not scheduled')}
-                    </Text>
-                  </View>
-                  {shouldShowPaidAt(detailsOrder.status) && (
-                    <View style={styles.detailsRow}>
-                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Paid at')}</Text>
+
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                      <Feather name="calendar" size={14} color={colors.primaryPurple} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Order date')}</Text>
                       <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                        {resolveOrderPaydaySource(detailsOrder)
-                          ? formatOrderDateTime(resolveOrderPaydaySource(detailsOrder))
-                          : '-'}
+                        {formatOrderDateTime(resolveOrderDateSource(detailsOrder))}
                       </Text>
                     </View>
+                  </View>
+
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                      <Feather name="clock" size={14} color={colors.primaryPurple} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Payment scheduled')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {resolveOrderScheduledPaymentDateSource(detailsOrder)
+                          ? formatOrderDateTime(resolveOrderScheduledPaymentDateSource(detailsOrder))
+                          : t('Not scheduled')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {shouldShowPaidAt(detailsOrder.status) && (
+                    <View style={styles.detailsIconRow}>
+                      <View style={[styles.detailsIconBox, { backgroundColor: `${colors.neonGreen}14` }]}>
+                        <Feather name="check-circle" size={14} color={colors.neonGreen} />
+                      </View>
+                      <View style={styles.detailsIconRowInfo}>
+                        <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Paid at')}</Text>
+                        <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                          {resolveOrderPaydaySource(detailsOrder)
+                            ? formatOrderDateTime(resolveOrderPaydaySource(detailsOrder))
+                            : '-'}
+                        </Text>
+                      </View>
+                    </View>
                   )}
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Items')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {resolveItemsFromOrderedProducts(detailsOrder)}
-                    </Text>
-                  </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Customer ID')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsOrder.customerId ?? '-'}
-                    </Text>
-                  </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Total')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {formatCurrency(
-                        typeof detailsOrder.totalValue === 'number'
-                          ? detailsOrder.totalValue
-                          : typeof detailsOrder.total === 'number'
-                            ? detailsOrder.total
-                            : 0,
-                        currency,
-                      )}
-                    </Text>
+
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.textMuted}14` }]}>
+                      <Feather name="hash" size={14} color={colors.textMuted} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Customer ID')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {detailsOrder.customerId ?? '-'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
@@ -2650,7 +2817,7 @@ export function Orders() {
                             onPress={confirmStatusChange}
                             disabled={statusUpdating}
                             buttonColor={colors.primaryPurple}
-                            textColor={colors.appBg}
+                            textColor="#fff"
                             style={[styles.modalButton, statusUpdating && styles.actionButtonDisabled]}
                             contentStyle={styles.modalButtonContent}
                             labelStyle={styles.modalButtonLabel}
@@ -2688,29 +2855,34 @@ export function Orders() {
                         return (
                           <View
                             key={`${item.productId}-${index}`}
-                            style={[styles.lineItemCard, { borderColor: colors.cardBorder }]}
+                            style={[styles.detailsLineCard, { borderColor: colors.cardBorder, backgroundColor: colors.inputBgFrom }]}
                           >
-                            <View style={styles.lineItemHeader}>
-                              <Text style={[styles.selectorTitle, { color: colors.textPrimary }]}>
+                            <View style={styles.detailsLineHeader}>
+                              <View style={[styles.detailsLineIconBox, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                                <Feather name="package" size={14} color={colors.primaryPurple} />
+                              </View>
+                              <Text style={[styles.detailsLineName, { color: colors.textPrimary }]} numberOfLines={1}>
                                 {lineProductName}
                               </Text>
                             </View>
-                            <View style={styles.lineItemRow}>
-                              <View style={styles.lineItemField}>
-                                <Text style={[styles.lineItemLabel, { color: colors.textMuted }]}>{t('Qty')}</Text>
-                                <Text style={[styles.lineItemTotal, { color: colors.textPrimary }]}>
+                            <View style={styles.detailsLineMetrics}>
+                              <View style={styles.detailsLineMetric}>
+                                <Text style={[styles.detailsLineMetricLabel, { color: colors.textMuted }]}>{t('Qty')}</Text>
+                                <Text style={[styles.detailsLineMetricValue, { color: colors.textPrimary }]}>
                                   {lineQuantity}
                                 </Text>
                               </View>
-                              <View style={styles.lineItemField}>
-                                <Text style={[styles.lineItemLabel, { color: colors.textMuted }]}>{t('Value')}</Text>
-                                <Text style={[styles.lineItemTotal, { color: colors.textPrimary }]}>
+                              <View style={[styles.detailsLineDivider, { backgroundColor: colors.cardBorder }]} />
+                              <View style={styles.detailsLineMetric}>
+                                <Text style={[styles.detailsLineMetricLabel, { color: colors.textMuted }]}>{t('Value')}</Text>
+                                <Text style={[styles.detailsLineMetricValue, { color: colors.textPrimary }]}>
                                   {formatCurrency(lineValue, currency)}
                                 </Text>
                               </View>
-                              <View style={styles.lineItemField}>
-                                <Text style={[styles.lineItemLabel, { color: colors.textMuted }]}>{t('Total')}</Text>
-                                <Text style={[styles.lineItemTotal, { color: colors.textPrimary }]}>
+                              <View style={[styles.detailsLineDivider, { backgroundColor: colors.cardBorder }]} />
+                              <View style={styles.detailsLineMetric}>
+                                <Text style={[styles.detailsLineMetricLabel, { color: colors.textMuted }]}>{t('Total')}</Text>
+                                <Text style={[styles.detailsLineMetricValue, { color: colors.textPrimary, fontWeight: '700' }]}>
                                   {formatCurrency(lineTotal, currency)}
                                 </Text>
                               </View>
@@ -2789,37 +2961,49 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    marginBottom: 6,
-    lineHeight: 36,
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  titleCompact: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerBtn: {
+    borderRadius: 8,
+  },
+  headerBtnOutlined: {
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerBtnContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  title: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.2,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginBottom: 4,
     lineHeight: 30,
   },
+  titleCompact: {
+    fontSize: 20,
+  },
   subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 10,
+    fontSize: 14,
+    lineHeight: 20,
   },
   subtitleCompact: {
     fontSize: 13,
     lineHeight: 18,
   },
-  headerLine: {
-    height: 6,
-    width: 132,
-    borderRadius: 999,
-  },
   banner: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -2828,7 +3012,7 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     gap: 8,
@@ -2842,89 +3026,146 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
   },
-  filterContainer: {
-    marginBottom: 16,
+  tabBarScroll: {
+    marginBottom: 20,
   },
-  dateFilterCard: {
-    borderWidth: 2,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginBottom: 16,
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 14,
+  tabBar: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  tabItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
+  },
+  tabItemActive: {
     shadowColor: '#000',
     shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
-  dateFilterCardCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
+  tabLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    textTransform: 'capitalize',
   },
-  dateFilterLabel: {
-    fontSize: 10,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+  filterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
   },
-  dateFilterHeader: {
+  filterBtnText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  filterActiveDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  filterPanel: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    gap: 14,
+  },
+  filterPanelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
   },
-  dateFilterHeaderActions: {
+  filterPanelRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 12,
+  },
+  filterPanelLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterPanelLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  filterDateDisplay: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  dateRangeSummary: {
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 6,
-  },
-  dateFilterActionPrimary: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  dateFilterActionContent: {
-    minHeight: 36,
-    paddingVertical: 0,
-  },
-  dateFilterActionText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  dateFilterActionGhost: {
-    borderWidth: 1.5,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  dateFilterGhostText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  filterButton: {
-    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
     borderWidth: 1,
-    marginRight: 10,
-    minHeight: 40,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
   },
-  filterText: {
+  filterDateText: {
     fontSize: 13,
+    fontWeight: '500',
+  },
+  presetRow: {
+    marginBottom: 2,
+  },
+  presetPills: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  presetPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
+  },
+  presetPillText: {
+    fontSize: 12,
     fontWeight: '600',
+  },
+  filterPanelActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterPanelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
+  },
+  filterPanelBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  compactActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 20,
   },
   actionRowCompact: {
     flexDirection: 'column',
@@ -2942,12 +3183,12 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   paginationButton: {
-    borderRadius: 9,
-    borderWidth: 1.5,
+    borderRadius: 8,
+    borderWidth: 1,
   },
   paginationButtonContent: {
-    minHeight: 32,
-    paddingVertical: 0,
+    height: 36,
+    paddingHorizontal: 12,
   },
   paginationButtonDisabled: {
     opacity: 0.5,
@@ -2958,39 +3199,20 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 8,
     minHeight: 40,
     borderWidth: 1,
   },
   searchInput: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
   },
   addButton: {
-    borderRadius: 10,
-    minHeight: 38,
+    borderRadius: 8,
   },
   addButtonContent: {
     paddingHorizontal: 12,
-    paddingVertical: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addButtonContentCompact: {
-    paddingVertical: 1,
-  },
-  addButtonLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  addButtonCompact: {
-    width: '100%',
-    minHeight: 36,
-    borderRadius: 9,
-  },
-  compactControlLabel: {
-    fontSize: 11,
-    fontWeight: '600',
+    paddingVertical: 8,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -3000,17 +3222,12 @@ const styles = StyleSheet.create({
   },
   orderMobileCard: {
     borderWidth: 1,
-    borderRadius: 22,
+    borderRadius: 16,
     padding: 16,
     gap: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
   },
   orderMobileCardDense: {
-    borderRadius: 18,
+    borderRadius: 14,
     padding: 12,
     gap: 10,
   },
@@ -3055,85 +3272,99 @@ const styles = StyleSheet.create({
   },
   orderMobileMetricCard: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 12,
     gap: 10,
     flex: 1,
     minWidth: 140,
   },
   orderMobileMetricCardDense: {
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 10,
     minWidth: 120,
   },
   orderTableShell: {
     borderWidth: 1,
-    borderRadius: 24,
-    padding: 14,
-    marginTop: 4,
-  },
-  orderTableScrollContent: {
-    minWidth: '100%',
-  },
-  orderTable: {
-    gap: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   orderTableHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
+    gap: 16,
+    paddingHorizontal: 16,
     paddingVertical: 12,
+    borderBottomWidth: 1,
   },
   orderTableHeadText: {
     fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.9,
+    fontWeight: '600',
+    letterSpacing: 1,
     textTransform: 'uppercase',
   },
   orderTableRow: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    borderWidth: 1,
-    borderRadius: 22,
-    paddingHorizontal: 14,
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
     paddingVertical: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
+    ...Platform.select({ web: { cursor: 'pointer', transitionProperty: 'background-color', transitionDuration: '150ms' } as any }),
   },
-  orderTableCell: {
-    justifyContent: 'center',
-    paddingRight: 16,
+  colOrderId: {
+    flex: 1,
+    minWidth: 70,
   },
-  orderTableOrderColumn: {
-    width: 160,
+  colOrderIdText: {
+    fontSize: 13,
+    fontWeight: '500',
+    fontFamily: 'monospace',
+    fontVariant: ['tabular-nums'],
   },
-  orderTableCustomerColumn: {
-    width: 170,
+  colCustomer: {
+    flex: 1.5,
+    minWidth: 90,
   },
-  orderTableTimelineColumn: {
-    width: 260,
+  colCustomerText: {
+    fontSize: 14,
   },
-  orderTableItemsColumn: {
-    width: 116,
+  colItems: {
+    width: 44,
+    textAlign: 'right' as const,
   },
-  orderTableTotalColumn: {
-    width: 132,
+  colItemsText: {
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontVariant: ['tabular-nums'],
+    textAlign: 'right',
   },
-  orderTableActionsColumn: {
-    width: 110,
+  colTotal: {
+    width: 90,
+    textAlign: 'right' as const,
+  },
+  colTotalText: {
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+    fontVariant: ['tabular-nums'],
+    textAlign: 'right',
+  },
+  colStatus: {
+    width: 100,
+  },
+  colDate: {
+    width: 90,
+  },
+  colDateText: {
+    fontSize: 12,
   },
   orderLabel: {
     fontSize: 12,
     marginBottom: 6,
   },
   orderId: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
     marginBottom: 10,
   },
   orderIdMobile: {
@@ -3142,26 +3373,6 @@ const styles = StyleSheet.create({
   },
   orderIdMobileDense: {
     fontSize: 15,
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 999,
-    minHeight: 26,
-    justifyContent: 'center',
-  },
-  statusBadgeCompact: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    minHeight: 22,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  statusTextCompact: {
-    fontSize: 10,
   },
   tableMetaRow: {
     flexDirection: 'row',
@@ -3220,11 +3431,12 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   orderTotal: {
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: 15,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   orderTotalMobile: {
-    fontSize: 20,
+    fontSize: 18,
   },
   actionIconRow: {
     flexDirection: 'row',
@@ -3242,7 +3454,7 @@ const styles = StyleSheet.create({
   actionIconButtonMobile: {
     width: 52,
     height: 52,
-    borderRadius: 14,
+    borderRadius: 12,
   },
   actionIconButtonCompact: {
     width: 48,
@@ -3272,7 +3484,7 @@ const styles = StyleSheet.create({
     maxHeight: '90%',
     ...Platform.select({
       ios: {
-        shadowColor: '#1c140d',
+        shadowColor: '#000000',
         shadowOffset: { width: 0, height: 18 },
         shadowOpacity: 0.22,
         shadowRadius: 30,
@@ -3331,20 +3543,78 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 8,
   },
-  detailsSummary: {
+  detailsHero: {
     borderWidth: 1.5,
-    borderRadius: 10,
-    padding: 12,
-    gap: 10,
+    borderRadius: 14,
+    padding: 16,
+    gap: 0,
+  },
+  detailsHeroTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingBottom: 14,
+  },
+  detailsHeroIdBlock: {
+    gap: 2,
+  },
+  detailsHeroLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  detailsHeroId: {
+    fontSize: 20,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  detailsHeroBottom: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    paddingTop: 12,
+    gap: 24,
+  },
+  detailsHeroStat: {
+    gap: 2,
+  },
+  detailsHeroStatLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  detailsHeroStatValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   detailsGrid: {
     borderWidth: 1.5,
-    borderRadius: 10,
-    padding: 12,
-    gap: 10,
+    borderRadius: 14,
+    padding: 14,
+    gap: 14,
   },
   detailsSection: {
     gap: 8,
+  },
+  detailsIconRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  detailsIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  detailsIconRowInfo: {
+    flex: 1,
+    gap: 2,
   },
   detailsRow: {
     flexDirection: 'row',
@@ -3381,7 +3651,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   modalInput: {
-    borderRadius: 16,
+    borderRadius: 12,
     minHeight: 52,
   },
   modalInputContent: {
@@ -3391,7 +3661,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   modalInputOutline: {
-    borderRadius: 16,
+    borderRadius: 12,
   },
   infoRow: {
     paddingVertical: 4,
@@ -3401,7 +3671,7 @@ const styles = StyleSheet.create({
   },
   metaRow: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -3417,9 +3687,57 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
+  datePickerCard: {
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
+  },
+  datePickerCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  datePickerIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  datePickerInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  datePickerDateText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  datePickerHint: {
+    fontSize: 11,
+  },
+  datePickerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  datePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
+  },
+  datePickerBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   dropdownHeader: {
     borderWidth: 2,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -3450,11 +3768,11 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   dropdownSearch: {
-    borderRadius: 10,
+    borderRadius: 12,
   },
   dropdownSelectionRow: {
     borderWidth: 1.5,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
     flexDirection: 'row',
@@ -3493,7 +3811,7 @@ const styles = StyleSheet.create({
   },
   selectorList: {
     borderWidth: 1.5,
-    borderRadius: 10,
+    borderRadius: 12,
     marginTop: 8,
     maxHeight: 160,
     overflow: 'hidden',
@@ -3533,29 +3851,34 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 12,
   },
-  statusOptions: {
+  statusPillRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  statusOptionsCompact: {
-    flexDirection: 'column',
-  },
-  statusOption: {
-    paddingHorizontal: 2,
-    minHeight: 40,
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: 999,
-    borderWidth: 1,
-    justifyContent: 'center',
+    borderWidth: 1.5,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
   },
-  statusOptionText: {
-    fontSize: 13,
+  statusPillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusPillText: {
+    fontSize: 12,
     fontWeight: '600',
   },
   statusConfirmCard: {
     marginTop: 8,
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 10,
     gap: 4,
   },
@@ -3576,7 +3899,7 @@ const styles = StyleSheet.create({
   },
   modalButton: {
     minWidth: 120,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
   },
   modalButtonContent: {
@@ -3593,7 +3916,7 @@ const styles = StyleSheet.create({
   },
   lineItemCard: {
     borderWidth: 1.5,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 10,
     gap: 8,
   },
@@ -3634,10 +3957,57 @@ const styles = StyleSheet.create({
     marginBottom: -2,
     fontSize: 10,
   },
+  detailsLineCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+  detailsLineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  detailsLineIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailsLineName: {
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  detailsLineMetrics: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+  },
+  detailsLineMetric: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  detailsLineMetricLabel: {
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  detailsLineMetricValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  detailsLineDivider: {
+    width: 1,
+    height: 24,
+  },
   summaryRow: {
     marginTop: 12,
     borderWidth: 1.5,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',

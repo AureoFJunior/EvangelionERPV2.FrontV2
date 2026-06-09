@@ -519,17 +519,21 @@ const resolveEnterpriseId = (data: unknown, token?: string | null) => {
     const payload = parseJwtPayload(token);
     if (payload) {
       const record = payload as Record<string, any>;
-      return (
+      const raw =
         record.enterpriseId ??
         record.enterprise_id ??
         record.groupsid ??
         record.groupSid ??
+        record['http://schemas.microsoft.com/ws/2008/06/identity/claims/groupsid'] ??
         record.enterprise?.id ??
         record.enterprise ??
         record.tenantId ??
         record.tenant_id ??
-        null
-      );
+        null;
+      if (typeof raw === 'string' && raw.trim() === '') {
+        return null;
+      }
+      return raw;
     }
   }
 

@@ -8,6 +8,13 @@ jest.mock('../contexts/ThemeContext', () => ({
   useTheme: jest.fn(),
 }));
 
+jest.mock('../contexts/I18nContext', () => ({
+  useI18n: () => ({
+    language: 'en',
+    t: (key: string) => key,
+  }),
+}));
+
 const mockedUseTheme = useTheme as jest.Mock;
 
 describe('ThemeToggle', () => {

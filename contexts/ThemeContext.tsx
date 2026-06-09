@@ -10,18 +10,22 @@ interface ThemeColors {
   cardBgFrom: string;
   cardBgTo: string;
   cardBorder: string;
+  sidebarBg: string;
   sidebarBgFrom: string;
   sidebarBgTo: string;
   primaryPurple: string;
   secondaryPurple: string;
   neonGreen: string;
   accentOrange: string;
+  destructive: string;
   textPrimary: string;
   textSecondary: string;
   textMuted: string;
   inputBgFrom: string;
   inputBgTo: string;
   hoverBg: string;
+  popover: string;
+  topBarBg: string;
 }
 
 interface ThemeContextType {
@@ -36,18 +40,22 @@ const lightColors: ThemeColors = {
   cardBgFrom: '#ffffff',
   cardBgTo: '#f4f5ff',
   cardBorder: '#d6d8ff',
+  sidebarBg: '#ffffff',
   sidebarBgFrom: '#ffffff',
   sidebarBgTo: '#f0f2ff',
   primaryPurple: '#6f4cff',
   secondaryPurple: '#9d7bff',
   neonGreen: '#00c27a',
   accentOrange: '#ff7a45',
+  destructive: '#ff4d7d',
   textPrimary: '#16192a',
   textSecondary: '#4c5070',
   textMuted: '#80849c',
   inputBgFrom: '#ffffff',
   inputBgTo: '#f3f5ff',
   hoverBg: '#eceeff',
+  popover: '#ffffff',
+  topBarBg: '#ffffff',
 };
 
 const darkColors: ThemeColors = {
@@ -56,18 +64,22 @@ const darkColors: ThemeColors = {
   cardBgFrom: '#111325',
   cardBgTo: '#0c0f1e',
   cardBorder: '#2f2f4a',
+  sidebarBg: '#0a0e1c',
   sidebarBgFrom: '#0f1022',
   sidebarBgTo: '#0a0c18',
   primaryPurple: '#7c4dff',
   secondaryPurple: '#9f76ff',
   neonGreen: '#34f5a6',
   accentOrange: '#ff8b5f',
+  destructive: '#ff4d7d',
   textPrimary: '#eef0fa',
   textSecondary: '#b6b9d4',
   textMuted: '#7b7f99',
   inputBgFrom: '#14172b',
   inputBgTo: '#0d1020',
   hoverBg: '#1f2340',
+  popover: '#1a1e36',
+  topBarBg: '#0a0e1c',
 };
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);

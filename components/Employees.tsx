@@ -1,74 +1,76 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Button, Chip, Searchbar, Text } from './ui/Paper';
+import { Button, Searchbar, Text } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useI18n } from '../contexts/I18nContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { useEmployees } from '../hooks/employees/useEmployees';
 import { EmployeeCard } from './employees/EmployeeCard';
 
+const DEPT_TONES: Record<string, 'primaryPurple' | 'neonGreen' | 'accentOrange' | 'secondaryPurple' | 'destructive'> = {
+  Engineering: 'primaryPurple',
+  Operations: 'primaryPurple',
+  Finance: 'neonGreen',
+  Sales: 'accentOrange',
+  Design: 'secondaryPurple',
+  HR: 'destructive',
+  Science: 'neonGreen',
+  Command: 'accentOrange',
+};
+
 export function Employees() {
   const { colors } = useTheme();
   const { t } = useI18n();
-  const { isCompact, contentPadding } = useResponsive();
+  const { isCompact, isTablet, contentPadding, width } = useResponsive();
   const {
     searchTerm,
     setSearchTerm,
-    filterDepartment,
-    setFilterDepartment,
-    departments,
     filteredEmployees,
   } = useEmployees();
+
+  const grouped = useMemo(() => {
+    const groups: Record<string, typeof filteredEmployees> = {};
+    filteredEmployees.forEach((emp) => {
+      const dept = emp.department || 'Other';
+      (groups[dept] ??= []).push(emp);
+    });
+    return groups;
+  }, [filteredEmployees]);
+
+  const subtitle = `${filteredEmployees.length} ${t('staff members across')} ${Object.keys(grouped).length} ${t('departments')}`;
+
+  // Determine number of columns based on width
+  const numColumns = width >= 1024 ? 3 : width >= 640 ? 2 : 1;
 
   return (
     <ScrollView style={styles.container}>
       <View style={[styles.content, { padding: contentPadding }]}>
-        <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-            {t('EMPLOYEE MANAGEMENT')}
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-            {t('Manage NERV personnel and team members')}
-          </Text>
-          <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
+        {/* Page Header */}
+        <View style={[styles.header, !isCompact && styles.headerRow]}>
+          <View>
+            <Text style={[styles.title, { color: colors.textPrimary }, isCompact && styles.titleCompact]}>
+              {t('Employees')}
+            </Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+              {subtitle}
+            </Text>
+          </View>
+          {!isCompact && (
+            <Button
+              mode="contained"
+              icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
+              buttonColor={colors.primaryPurple}
+              textColor="#fff"
+              style={styles.addButton}
+              contentStyle={styles.addButtonContent}
+            >
+              {t('Add Employee')}
+            </Button>
+          )}
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
-          {departments.map((dept) => {
-            const isSelected = filterDepartment === dept;
-            return (
-              <Chip
-                key={dept}
-                selected={isSelected}
-                showSelectedCheck={false}
-                icon={
-                  isSelected
-                    ? ({ size }) => (
-                        <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                      )
-                    : undefined
-                }
-                onPress={() => setFilterDepartment(dept)}
-                style={[
-                  styles.filterChip,
-                  {
-                    backgroundColor: isSelected ? colors.primaryPurple : colors.cardBgFrom,
-                    borderColor: isSelected ? colors.primaryPurple : colors.cardBorder,
-                  },
-                ]}
-                textStyle={[
-                  styles.filterText,
-                  { color: isSelected ? colors.neonGreen : colors.textSecondary },
-                ]}
-              >
-                {t(dept.charAt(0).toUpperCase() + dept.slice(1))}
-              </Chip>
-            );
-          })}
-        </ScrollView>
-
-        <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
+        <View style={styles.searchRow}>
           <Searchbar
             placeholder={t('Search employees...')}
             value={searchTerm}
@@ -78,28 +80,52 @@ export function Employees() {
             inputStyle={[styles.searchInput, { color: colors.textPrimary }]}
             placeholderTextColor={colors.textMuted}
           />
-          <Button
-            mode="contained"
-            icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
-            buttonColor={colors.primaryPurple}
-            textColor={colors.neonGreen}
-            style={[styles.addButton, isCompact && styles.addButtonCompact]}
-            contentStyle={[styles.addButtonContent, isCompact && styles.addButtonContentCompact]}
-            labelStyle={styles.addButtonLabel}
-          >
-            {t('Add')}
-          </Button>
         </View>
 
-        <View style={styles.employeeList}>
-          {filteredEmployees.map((employee) => (
-            <EmployeeCard
-              key={employee.id}
-              employee={employee}
-              colors={colors}
-              isCompact={isCompact}
-            />
-          ))}
+        {/* Department groups */}
+        <View style={styles.departmentList}>
+          {Object.entries(grouped).map(([dept, members]) => {
+            const deptColor = DEPT_TONES[dept] ? colors[DEPT_TONES[dept]] : colors.textMuted;
+            return (
+              <View key={dept} style={styles.deptSection}>
+                {/* Department separator */}
+                <View style={styles.deptHeader}>
+                  <Text style={[styles.deptLabel, { color: deptColor }]}>
+                    {t(dept.toUpperCase())}
+                  </Text>
+                  <View style={[styles.deptCount, { borderColor: colors.cardBorder }]}>
+                    <Text style={[styles.deptCountText, { color: colors.textMuted }]}>
+                      {members.length}
+                    </Text>
+                  </View>
+                  <View style={[styles.deptLine, { backgroundColor: colors.cardBorder }]} />
+                </View>
+
+                {/* Employee cards grid */}
+                <View style={[
+                  styles.employeeGrid,
+                  numColumns > 1 && styles.employeeGridMultiCol,
+                ]}>
+                  {members.map((employee) => (
+                    <View
+                      key={employee.id}
+                      style={[
+                        numColumns > 1 && {
+                          width: `${(100 / numColumns) - 1}%` as any,
+                        },
+                      ]}
+                    >
+                      <EmployeeCard
+                        employee={employee}
+                        colors={colors}
+                        isCompact={isCompact}
+                      />
+                    </View>
+                  ))}
+                </View>
+              </View>
+            );
+          })}
         </View>
       </View>
     </ScrollView>
@@ -118,88 +144,80 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    marginBottom: 6,
-    lineHeight: 36,
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  titleCompact: {
+  title: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.2,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginBottom: 4,
     lineHeight: 30,
   },
-  subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 10,
+  titleCompact: {
+    fontSize: 20,
   },
-  subtitleCompact: {
+  subtitle: {
     fontSize: 13,
     lineHeight: 18,
   },
-  headerLine: {
-    height: 6,
-    width: 132,
-    borderRadius: 999,
-  },
-  filterContainer: {
-    marginBottom: 16,
-  },
-  filterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    marginRight: 10,
-    minHeight: 40,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-  },
-  filterText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  searchRow: {
     marginBottom: 24,
   },
-  actionRowCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-  },
   searchBar: {
-    flex: 1,
-    borderRadius: 16,
-    minHeight: 50,
+    borderRadius: 12,
+    minHeight: 48,
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
   },
   addButton: {
-    borderRadius: 14,
-    minHeight: 50,
-  },
-  addButtonCompact: {
-    width: '100%',
-    minHeight: 44,
-    borderRadius: 10,
+    borderRadius: 8,
   },
   addButtonContent: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-  },
-  addButtonContentCompact: {
+    paddingHorizontal: 16,
     paddingVertical: 6,
   },
-  addButtonLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+  departmentList: {
+    gap: 24,
   },
-  employeeList: {
-    gap: 16,
+  deptSection: {},
+  deptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  deptLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  deptCount: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  deptCountText: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    fontVariant: ['tabular-nums'],
+  },
+  deptLine: {
+    flex: 1,
+    height: 1,
+  },
+  employeeGrid: {
+    gap: 12,
+  },
+  employeeGridMultiCol: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
   },
 });

@@ -95,6 +95,7 @@ export interface PayableBill {
 export interface PayableBillPayload {
   id?: string;
   description: string;
+  billType?: number;
   dueDate: string;
   paidAt?: string | null;
   amount: number;
@@ -207,13 +208,19 @@ export interface CustomerFilter {
 }
 
 export interface Report {
-  id: number;
+  id: number | string;
   title: string;
   description: string;
   date: string;
   type: string;
   icon: string;
 }
+
+export interface ReportDetail extends Report {
+  htmlContent: string;
+}
+
+export type ReportType = 'Stock' | 'MonthlyBilling' | 'TopProductsRevenue' | 'SalesByStatus' | 'PayablesOverview';
 
 const normalizeString = (value: unknown) => {
   if (typeof value !== 'string') {
@@ -391,115 +398,60 @@ export class ErpService {
   }
 
   async createOrder(order: OrderCreatePayload) {
-    return this.client.request<Order, OrderCreatePayload>({
+    const items = (order.orderedProduct ?? []).map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      value: item.value,
+    }));
+    const body = {
+      customerId: order.customerId,
+      paymentScheduledDate:
+        order.paymentScheduledDate ?? order.PaymentScheduledDate ?? order.date,
+      status: order.status,
+      items,
+    };
+    return this.client.request<Order, typeof body>({
       path: '/Order/AddOrder',
       method: 'POST',
-      body: order,
+      body,
     });
   }
 
   async updateOrder(order: OrderUpdatePayload) {
-    const normalizeOrderResponse = (response: {
-      ok: boolean;
-      data: Order | null;
-      status: number;
-      error?: string;
-      headers: Record<string, string>;
-    }) => {
-      if (response.ok && response.data) {
-        return {
-          ...response,
-          data: this.normalizeOrder(response.data as Record<string, any>),
-        };
-      }
-
-      if (response.ok) {
-        return {
-          ...response,
-          data: null,
-        };
-      }
-
-      return response;
+    const body = {
+      id: order.id,
+      customerId: order.customerId,
+      paymentScheduledDate:
+        order.paymentScheduledDate ?? order.PaymentScheduledDate ?? null,
+      payday: order.payday ?? null,
+      status: order.status,
     };
 
-    const response = await this.client.request<Order, OrderUpdatePayload>({
+    const response = await this.client.request<Order, typeof body>({
       path: '/Order/UpdateOrder',
       method: 'PUT',
-      body: order,
+      body,
     });
+
+    if (response.ok && response.data) {
+      return {
+        ...response,
+        data: this.normalizeOrder(response.data as Record<string, any>),
+      };
+    }
 
     if (response.ok) {
-      return normalizeOrderResponse(response);
+      return { ...response, data: null };
     }
 
-    const fallbackPost = await this.client.request<Order, OrderUpdatePayload>({
-      path: '/Order/UpdateOrder',
-      method: 'POST',
-      body: order,
-    });
-
-    if (fallbackPost.ok) {
-      return normalizeOrderResponse(fallbackPost);
-    }
-    return fallbackPost;
+    return response;
   }
 
   async deleteOrder(id: string | number) {
-    const response = await this.client.request<void>({
+    return this.client.request<void>({
       path: '/Order/DeleteOrder',
       method: 'DELETE',
       query: { id },
-    });
-
-    if (response.ok) {
-      return response;
-    }
-
-    const encodedId = encodeURIComponent(String(id));
-    const byPath = await this.client.request<void>({
-      path: `/Order/DeleteOrder/${encodedId}`,
-      method: 'DELETE',
-    });
-
-    if (byPath.ok) {
-      return byPath;
-    }
-
-    const deleteWithBody = await this.client.request<void, { id: string | number }>({
-      path: '/Order/DeleteOrder',
-      method: 'DELETE',
-      body: { id },
-    });
-
-    if (deleteWithBody.ok) {
-      return deleteWithBody;
-    }
-
-    const deleteWithAltBody = await this.client.request<void, { orderId: string | number }>({
-      path: '/Order/DeleteOrder',
-      method: 'DELETE',
-      body: { orderId: id },
-    });
-
-    if (deleteWithAltBody.ok) {
-      return deleteWithAltBody;
-    }
-
-    const postFallback = await this.client.request<void, { id: string | number }>({
-      path: '/Order/DeleteOrder',
-      method: 'POST',
-      body: { id },
-    });
-
-    if (postFallback.ok) {
-      return postFallback;
-    }
-
-    return this.client.request<void, { orderId: string | number }>({
-      path: '/Order/DeleteOrder',
-      method: 'POST',
-      body: { orderId: id },
     });
   }
 
@@ -661,44 +613,33 @@ export class ErpService {
   }
 
   async fetchPayableBills(pageNumber = 1, pageSize = 25) {
-    const pagedResponse = await this.client.request<PayableBill[]>({
+    const response = await this.client.request<PayableBill[]>({
       path: `/PayableBills/GetPayableBills/${pageNumber}/${pageSize}`,
       method: 'GET',
     });
 
-    if (pagedResponse.ok) {
+    if (response.ok) {
       const normalized = this
-        .normalizeList<PayableBill>(pagedResponse.data)
+        .normalizeList<PayableBill>(response.data)
         .map((item) => this.normalizePayableBill(item as Record<string, any>));
       return {
-        ...pagedResponse,
+        ...response,
         data: normalized,
       };
     }
 
-    const fallbackResponse = await this.client.request<PayableBill[]>({
-      path: '/PayableBills/GetPayableBills',
-      method: 'GET',
-    });
-
-    if (fallbackResponse.ok) {
-      const normalized = this
-        .normalizeList<PayableBill>(fallbackResponse.data)
-        .map((item) => this.normalizePayableBill(item as Record<string, any>));
-      return {
-        ...fallbackResponse,
-        data: normalized,
-      };
-    }
-
-    return fallbackResponse;
+    return response;
   }
 
   async createPayableBill(payload: PayableBillPayload) {
+    const body: PayableBillPayload = {
+      ...payload,
+      billType: payload.billType ?? 0,
+    };
     const response = await this.client.request<PayableBill, PayableBillPayload>({
       path: '/PayableBills/AddPayableBill',
       method: 'POST',
-      body: payload,
+      body,
     });
 
     if (response.ok && response.data) {
@@ -712,10 +653,14 @@ export class ErpService {
   }
 
   async updatePayableBill(payload: PayableBillPayload) {
+    const body: PayableBillPayload = {
+      ...payload,
+      billType: payload.billType ?? 0,
+    };
     const response = await this.client.request<PayableBill, PayableBillPayload>({
       path: '/PayableBills/UpdatePayableBill',
       method: 'PUT',
-      body: payload,
+      body,
     });
 
     if (response.ok && response.data) {
@@ -736,10 +681,12 @@ export class ErpService {
     });
   }
 
-  async getCashFlowForecast(horizonInDays: number, currentBalance: number) {
-    const encodedBalance = encodeURIComponent(String(currentBalance));
+  async getCashFlowForecast(horizonInDays: number, currentBalance?: number | null) {
+    const path = currentBalance != null
+      ? `/CashFlowForecast/GetForecastWithBalanceOverride/${horizonInDays}/${encodeURIComponent(String(currentBalance))}`
+      : `/CashFlowForecast/GetForecast/${horizonInDays}`;
     const response = await this.client.request<CashFlowForecast>({
-      path: `/CashFlowForecast/GetForecast/${horizonInDays}/${encodedBalance}`,
+      path,
       method: 'GET',
     });
 
@@ -773,11 +720,38 @@ export class ErpService {
     return response;
   }
 
+  async requestPasswordReset(email: string) {
+    return this.client.request<{ message: string }, { email: string }>({
+      path: '/User/RequestPasswordReset',
+      method: 'POST',
+      body: { email },
+      withAuth: false,
+    });
+  }
+
+  async resetPassword(email: string, token: string, newPassword: string) {
+    return this.client.request<{ message: string }, { email: string; token: string; newPassword: string }>({
+      path: '/User/ResetPassword',
+      method: 'POST',
+      body: { email, token, newPassword },
+      withAuth: false,
+    });
+  }
+
   async createCustomer(customer: Customer) {
-    const response = await this.client.request<Customer, Customer>({
+    const body = {
+      name: (customer.name ?? '').trim(),
+      email: (customer.email ?? '').trim(),
+      phoneNumber: (customer.phoneNumber ?? '').trim() || null,
+      adress: (customer.adress ?? '').trim() || null,
+      document: customer.document?.trim() ? customer.document.trim() : null,
+      isActive: customer.isActive ?? true,
+      enterpriseId: customer.enterpriseId ?? null,
+    };
+    const response = await this.client.request<Customer, typeof body>({
       path: '/Customer/AddCustomer',
       method: 'POST',
-      body: customer,
+      body,
     });
     if (response.ok && response.data) {
       return { ...response, data: this.normalizeCustomer(response.data as Record<string, any>) };
@@ -786,10 +760,19 @@ export class ErpService {
   }
 
   async updateCustomer(customer: Customer) {
-    const response = await this.client.request<Customer, Customer>({
+    const body = {
+      id: customer.id,
+      name: (customer.name ?? '').trim(),
+      email: (customer.email ?? '').trim(),
+      phoneNumber: (customer.phoneNumber ?? '').trim(),
+      adress: (customer.adress ?? '').trim(),
+      document: customer.document?.trim() ? customer.document.trim() : null,
+      isActive: customer.isActive ?? true,
+    };
+    const response = await this.client.request<Customer, typeof body>({
       path: '/Customer/UpdateCustomer',
       method: 'PUT',
-      body: customer,
+      body,
     });
     if (response.ok && response.data) {
       return { ...response, data: this.normalizeCustomer(response.data as Record<string, any>) };
@@ -806,18 +789,49 @@ export class ErpService {
   }
 
   async updateProduct(product: Product) {
-    return this.client.request<Product, Product>({
+    const body = {
+      id: product.id,
+      name: product.name,
+      description: product.description ?? '',
+      defaultValue: product.defaultValue ?? product.price ?? 0,
+      storageQuantity: product.storageQuantity ?? product.stock ?? 0,
+      unitOfMeasure: product.unitOfMeasure ?? '',
+      isExternal: product.isExternal ?? false,
+      isService: product.isService ?? false,
+      isActive: product.isActive,
+    };
+    return this.client.request<Product, typeof body>({
       path: '/Product/UpdateProduct',
       method: 'PUT',
-      body: product,
+      body,
     });
   }
 
   async createProduct(payload: { product: Product; file: string }) {
-    return this.client.request<Product, { product: Product; file: string }>({
+    const { product, file } = payload;
+    const body = {
+      name: product.name,
+      description: product.description ?? '',
+      defaultValue: product.defaultValue ?? 0,
+      storageQuantity: product.storageQuantity ?? 0,
+      unitOfMeasure: product.unitOfMeasure ?? '',
+      isExternal: product.isExternal ?? false,
+      isService: product.isService ?? false,
+      pictureAdress: product.pictureAdress ?? product.pictureAddress ?? '',
+      file,
+    };
+    return this.client.request<Product, typeof body>({
       path: '/Product/AddProduct',
       method: 'POST',
-      body: payload,
+      body,
+    });
+  }
+
+  async uploadProductPicture(productId: string, file: string) {
+    return this.client.request<Product, { productId: string; file: string }>({
+      path: '/Product/UploadPicture',
+      method: 'PATCH',
+      body: { productId, file },
     });
   }
 
@@ -836,6 +850,21 @@ export class ErpService {
     });
   }
 
+  fetchReportById(id: string | number) {
+    return this.client.request<ReportDetail>({
+      path: `/reports/${id}`,
+      method: 'GET',
+    });
+  }
+
+  generateReport(type: ReportType) {
+    return this.client.request<Report>({
+      path: '/reports',
+      method: 'POST',
+      body: { type },
+    });
+  }
+
   private normalizeCustomer(item: Record<string, any>): Customer {
     const idCandidate =
       item.id ??
@@ -849,7 +878,7 @@ export class ErpService {
       item.customer_code ??
       item.code ??
       item.custId ??
-      item.CustId ??
+      item.CustId ??                     
       item.cust_id ??
       item.userId ??
       item.UserId ??

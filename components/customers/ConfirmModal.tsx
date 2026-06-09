@@ -76,7 +76,7 @@ export function ConfirmModal({
               onPress={onConfirm}
               disabled={busy}
               buttonColor={colors.primaryPurple}
-              textColor={colors.appBg}
+              textColor="#fff"
               style={styles.modalButton}
               contentStyle={styles.modalButtonContent}
               labelStyle={styles.modalButtonLabel}
@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
     gap: 20,
     ...Platform.select({
       ios: {
-        shadowColor: '#1c140d',
+        shadowColor: '#000000',
         shadowOffset: { width: 0, height: 18 },
         shadowOpacity: 0.22,
         shadowRadius: 30,

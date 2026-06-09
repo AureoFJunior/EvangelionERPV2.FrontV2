@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ErpService, Order as OrderModel } from '../../services/erpService';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bill as BillModel, ErpService, Order as OrderModel } from '../../services/erpService';
 import { filterOrdersBySearch } from '../../utils/bills/helpers';
 
 interface UseBillsOrdersParams {
@@ -19,14 +19,18 @@ export function useBillsOrders({
 }: UseBillsOrdersParams) {
   const [searchTerm, setSearchTerm] = useState('');
   const [orders, setOrders] = useState<OrderModel[]>([]);
+  const [bills, setBills] = useState<Map<string, BillModel>>(new Map());
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const billFetchedRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (!isAuthenticated || authLoading) {
       setOrders([]);
+      setBills(new Map());
+      billFetchedRef.current.clear();
       return;
     }
 
@@ -62,6 +66,57 @@ export function useBillsOrders({
     };
   }, [erpService, isAuthenticated, authLoading, pageNumber, pageSize, enterpriseId]);
 
+  useEffect(() => {
+    if (!isAuthenticated || authLoading || orders.length === 0) {
+      return;
+    }
+
+    const pending = orders.filter(
+      (order) => order.id != null && !billFetchedRef.current.has(String(order.id)),
+    );
+
+    if (pending.length === 0) {
+      return;
+    }
+
+    let active = true;
+
+    const loadBills = async () => {
+      const fetched = new Map<string, BillModel>();
+
+      for (const order of pending) {
+        const key = String(order.id);
+        billFetchedRef.current.add(key);
+
+        const response = await erpService.getBillByOrder(order.id);
+        if (!active) return;
+
+        if (response.ok && response.data) {
+          fetched.set(key, response.data);
+        }
+      }
+
+      if (active) {
+        setBills((prev) => {
+          const merged = new Map(prev);
+          fetched.forEach((bill, key) => merged.set(key, bill));
+          return merged;
+        });
+      }
+    };
+
+    loadBills();
+
+    return () => {
+      active = false;
+    };
+  }, [orders, isAuthenticated, authLoading, erpService]);
+
+  useEffect(() => {
+    billFetchedRef.current.clear();
+    setBills(new Map());
+  }, [pageNumber]);
+
   const filteredOrders = useMemo(() => filterOrdersBySearch(orders, searchTerm), [orders, searchTerm]);
 
   const goPrevPage = () => {
@@ -79,6 +134,7 @@ export function useBillsOrders({
     setSearchTerm,
     orders,
     setOrders,
+    bills,
     loading,
     errorMessage,
     setErrorMessage,

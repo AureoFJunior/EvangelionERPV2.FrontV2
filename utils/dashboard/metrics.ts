@@ -116,7 +116,7 @@ export const buildCategoryData = (products: ProductModel[]) => {
 };
 
 export const buildActivities = (orders: OrderModel[], products: ProductModel[]) => {
-  const events: { action: string; time: string; date: Date }[] = [];
+  const events: { action: string; time: string; date: Date; amount: number | null }[] = [];
 
   orders.forEach((order) => {
     if (isInactiveOrder(order)) {
@@ -130,6 +130,7 @@ export const buildActivities = (orders: OrderModel[], products: ProductModel[]) 
       action: `Order #${order.id ?? '-'} received`,
       time: formatRelativeTime(created),
       date: created,
+      amount: typeof order.total === 'number' ? order.total : null,
     });
   });
 
@@ -145,13 +146,14 @@ export const buildActivities = (orders: OrderModel[], products: ProductModel[]) 
       action: `Product updated: ${product.name}`,
       time: formatRelativeTime(created),
       date: created,
+      amount: null,
     });
   });
 
   return events
     .sort((a, b) => b.date.getTime() - a.date.getTime())
     .slice(0, 5)
-    .map(({ action, time }) => ({ action, time }));
+    .map(({ action, time, amount }) => ({ action, time, amount }));
 };
 
 const isInactiveOrder = (order: OrderModel) => {
@@ -184,8 +186,13 @@ const countOrderRange = (orders: OrderModel[], start: Date, end: Date) =>
     return created ? isInRange(created, start, end) : false;
   }).length;
 
+const hasPaidDate = (order: OrderModel) =>
+  (order.payday != null && order.payday !== '') ||
+  (order.paymentDate != null && order.paymentDate !== '');
+
 const sumOrderRange = (orders: OrderModel[], start: Date, end: Date) =>
   orders.reduce((sum, order) => {
+    if (!hasPaidDate(order)) return sum;
     const created = parseDate(order.date ?? '');
     if (!created || !isInRange(created, start, end)) {
       return sum;
@@ -205,10 +212,19 @@ export const buildDashboardTotals = (
   const totalProducts = activeProducts.length;
   const totalOrders = activeOrders.length;
   const activeCustomers = activeCustomersRows.length;
-  const revenue = activeOrders.reduce(
-    (sum, order) => sum + (typeof order.total === 'number' ? order.total : 0),
-    0,
-  );
+  const revenue = activeOrders
+    .filter(hasPaidDate)
+    .reduce(
+      (sum, order) => sum + (typeof order.total === 'number' ? order.total : 0),
+      0,
+    );
+
+  const outstandingAR = activeOrders
+    .filter((order) => {
+      const s = (order.status ?? '').toLowerCase();
+      return s !== 'completed' && s !== 'paid' && s !== 'delivered';
+    })
+    .reduce((sum, order) => sum + (typeof order.total === 'number' ? order.total : 0), 0);
 
   const now = new Date();
   const last30Start = new Date(now);
@@ -227,14 +243,176 @@ export const buildDashboardTotals = (
   const revenueLast30 = sumOrderRange(activeOrders, last30Start, now);
   const revenuePrev30 = sumOrderRange(activeOrders, prev30Start, prev30End);
 
+  const arLast30 = activeOrders
+    .filter((order) => {
+      const s = (order.status ?? '').toLowerCase();
+      if (s === 'completed' || s === 'paid' || s === 'delivered') return false;
+      const d = parseDate(order.date ?? '');
+      return d ? isInRange(d, last30Start, now) : false;
+    })
+    .reduce((sum, o) => sum + (typeof o.total === 'number' ? o.total : 0), 0);
+  const arPrev30 = activeOrders
+    .filter((order) => {
+      const s = (order.status ?? '').toLowerCase();
+      if (s === 'completed' || s === 'paid' || s === 'delivered') return false;
+      const d = parseDate(order.date ?? '');
+      return d ? isInRange(d, prev30Start, prev30End) : false;
+    })
+    .reduce((sum, o) => sum + (typeof o.total === 'number' ? o.total : 0), 0);
+
   return {
     totalProducts,
     totalOrders,
     activeCustomers,
     revenue,
+    outstandingAR,
     productChange: buildChange(productLast30, productPrev30),
     orderChange: buildChange(ordersLast30, ordersPrev30),
     customerChange: buildChange(customersLast30, customersPrev30),
     revenueChange: buildChange(revenueLast30, revenuePrev30),
+    arChange: buildChange(arLast30, arPrev30),
   };
+};
+
+export const buildMonthlyRevenueSeries = (orders: OrderModel[]) => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const activeOrders = orders.filter((order) => !isInactiveOrder(order));
+
+  const paidOrders = activeOrders.filter(hasPaidDate);
+
+  return monthLabels.map((label, monthIndex) => {
+    const start = new Date(year, monthIndex, 1);
+    const end = new Date(year, monthIndex + 1, 1);
+    const revenue = paidOrders.reduce((sum, order) => {
+      const d = parseDate(order.date ?? '');
+      if (!d || !isInRange(d, start, end)) return sum;
+      return sum + (typeof order.total === 'number' ? order.total : 0);
+    }, 0);
+    return { x: label, y: revenue };
+  });
+};
+
+export const buildMonthlyTargetSeries = (revenueSeries: Array<{ x: string; y: number }>) => {
+  const filledMonths = revenueSeries.filter((d) => d.y > 0);
+  const avg = filledMonths.length > 0
+    ? filledMonths.reduce((s, d) => s + d.y, 0) / filledMonths.length
+    : 0;
+  const offsets = [0.92, 0.95, 0.97, 1.0, 1.02, 1.04, 1.06, 1.08, 1.10, 1.12, 1.14, 1.16];
+  return revenueSeries.map((d, i) => ({ x: d.x, y: avg > 0 ? avg * offsets[i % offsets.length] : 0 }));
+};
+
+export interface OrderStatusCounts {
+  completed: number;
+  processing: number;
+  pending: number;
+  cancelled: number;
+  total: number;
+}
+
+export const buildOrderStatusCounts = (orders: OrderModel[]): OrderStatusCounts => {
+  const counts: OrderStatusCounts = { completed: 0, processing: 0, pending: 0, cancelled: 0, total: 0 };
+  orders.forEach((order) => {
+    if (order.isActive === false) return;
+    const s = (order.status ?? '').toLowerCase();
+    if (s === 'completed' || s === 'paid' || s === 'delivered') counts.completed += 1;
+    else if (s === 'processing' || s === 'in progress' || s === 'inprogress') counts.processing += 1;
+    else if (s === 'cancelled' || s === 'canceled') counts.cancelled += 1;
+    else counts.pending += 1;
+    counts.total += 1;
+  });
+  return counts;
+};
+
+export interface CategoryRevenueRow {
+  category: string;
+  q1: number;
+  q2: number;
+  q3: number;
+  q4: number;
+}
+
+export const buildCategoryRevenue = (
+  products: ProductModel[],
+  orders: OrderModel[],
+): CategoryRevenueRow[] => {
+  const activeProducts = products.filter((p) => p.isActive !== false);
+  const activeOrders = orders.filter((o) => !isInactiveOrder(o));
+
+  const categories = new Set<string>();
+  activeProducts.forEach((p) => {
+    if (p.category) categories.add(p.category);
+  });
+  if (categories.size === 0) {
+    categories.add('Uncategorized');
+  }
+
+  const productCategoryMap = new Map<string | number, string>();
+  activeProducts.forEach((p) => {
+    productCategoryMap.set(p.id, p.category || 'Uncategorized');
+  });
+
+  const now = new Date();
+  const year = now.getFullYear();
+
+  const quarterRanges = [
+    { start: new Date(year, 0, 1), end: new Date(year, 3, 1) },
+    { start: new Date(year, 3, 1), end: new Date(year, 6, 1) },
+    { start: new Date(year, 6, 1), end: new Date(year, 9, 1) },
+    { start: new Date(year, 9, 1), end: new Date(year + 1, 0, 1) },
+  ];
+
+  const catRevenue = new Map<string, [number, number, number, number]>();
+  categories.forEach((cat) => catRevenue.set(cat, [0, 0, 0, 0]));
+
+  activeOrders.forEach((order) => {
+    const d = parseDate(order.date ?? '');
+    if (!d) return;
+    const total = typeof order.total === 'number' ? order.total : 0;
+
+    let qIdx = -1;
+    for (let i = 0; i < quarterRanges.length; i++) {
+      if (d >= quarterRanges[i].start && d < quarterRanges[i].end) {
+        qIdx = i;
+        break;
+      }
+    }
+    if (qIdx < 0) return;
+
+    // Distribute order revenue across categories based on product count
+    const catCount = new Map<string, number>();
+    if (order.orderedProduct && Array.isArray(order.orderedProduct)) {
+      (order.orderedProduct as Array<{ productId?: string | number }>).forEach((item) => {
+        const cat = item.productId ? (productCategoryMap.get(item.productId) ?? 'Uncategorized') : 'Uncategorized';
+        catCount.set(cat, (catCount.get(cat) ?? 0) + 1);
+      });
+    }
+
+    if (catCount.size === 0) {
+      // Distribute evenly across all categories
+      const share = total / categories.size;
+      categories.forEach((cat) => {
+        const arr = catRevenue.get(cat)!;
+        arr[qIdx] += share;
+      });
+    } else {
+      const totalItems = Array.from(catCount.values()).reduce((a, b) => a + b, 0);
+      catCount.forEach((count, cat) => {
+        if (!catRevenue.has(cat)) catRevenue.set(cat, [0, 0, 0, 0]);
+        const arr = catRevenue.get(cat)!;
+        arr[qIdx] += (total * count) / totalItems;
+      });
+    }
+  });
+
+  return Array.from(catRevenue.entries())
+    .map(([category, quarters]) => ({
+      category,
+      q1: Math.round(quarters[0] / 1000),
+      q2: Math.round(quarters[1] / 1000),
+      q3: Math.round(quarters[2] / 1000),
+      q4: Math.round(quarters[3] / 1000),
+    }))
+    .sort((a, b) => (b.q1 + b.q2 + b.q3 + b.q4) - (a.q1 + a.q2 + a.q3 + a.q4))
+    .slice(0, 5);
 };

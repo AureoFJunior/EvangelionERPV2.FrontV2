@@ -1,10 +1,9 @@
 import React from 'react';
-import { View, StyleSheet, Image, ScrollView } from 'react-native';
+import { View, StyleSheet, ScrollView, Pressable, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { IconButton, Modal, Portal, Surface, Text, TouchableRipple } from './ui/Paper';
+import { IconButton, Portal, Text } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { ThemeToggle } from './ThemeToggle';
 import { useResponsive } from '../hooks/useResponsive';
 import { sidebarModules } from '../utils/sidebar/modules';
 import { useSidebarState } from '../hooks/sidebar/useSidebarState';
@@ -16,6 +15,8 @@ interface SidebarProps {
   layout?: 'side' | 'stacked';
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  drawerOpen?: boolean;
+  onDrawerClose?: () => void;
 }
 
 export function Sidebar({
@@ -24,23 +25,23 @@ export function Sidebar({
   layout = 'side',
   collapsed = false,
   onToggleCollapsed,
+  drawerOpen: externalDrawerOpen,
+  onDrawerClose,
 }: SidebarProps) {
-  const { colors, theme, toggleTheme } = useTheme();
+  const { colors } = useTheme();
   const { t } = useI18n();
-  const { logout, user } = useAuth();
+  const { logout } = useAuth();
   const { isCompact } = useResponsive();
   const isStacked = layout === 'stacked';
   const isDrawerLayout = isStacked && isCompact;
   const isSideCollapsed = !isStacked && collapsed;
   const isStackedCollapsed = isStacked && !isDrawerLayout && collapsed;
-  const baseSidebarWidth = isSideCollapsed ? 84 : 270;
-  const showProfile = !isCompact && !isSideCollapsed;
-  const avatarUri = user?.avatarUrl?.trim() ?? '';
-  const { drawerOpen, setDrawerOpen, avatarError, setAvatarError } = useSidebarState(isDrawerLayout, avatarUri);
-  const defaultAvatar = require('../assets/images/icon.png');
-  const avatarSource = avatarUri && !avatarError ? { uri: avatarUri } : defaultAvatar;
-  const displayName = user?.name ?? t('User');
-  const displayRole = user?.role ?? user?.email ?? t('Operator');
+  const baseSidebarWidth = isSideCollapsed ? 72 : 240;
+  const { drawerOpen: internalDrawerOpen, setDrawerOpen: setInternalDrawerOpen } = useSidebarState(isDrawerLayout, '');
+  const drawerOpen = externalDrawerOpen ?? internalDrawerOpen;
+  const setDrawerOpen = onDrawerClose
+    ? (open: boolean) => { if (!open) onDrawerClose(); }
+    : setInternalDrawerOpen;
   const navigationModules = React.useMemo(
     () =>
       sidebarModules.filter(
@@ -62,586 +63,424 @@ export function Sidebar({
     }
   };
 
-  const renderHeader = (
-    showToggle: boolean,
-    toggleIcon: 'menu' | 'x' | 'chevrons-left' | 'chevrons-right' | 'chevrons-up' | 'chevrons-down',
-    onToggle: () => void,
-  ) => (
-    <View
-      style={[
-        styles.header,
-        { borderColor: colors.cardBorder },
-        isCompact && styles.headerCompact,
-        isSideCollapsed && styles.headerCollapsed,
-      ]}
-    >
-      <View style={[styles.headerRow, isSideCollapsed && styles.headerRowCollapsed]}>
-        <View style={[styles.logoContainer, isSideCollapsed && styles.logoContainerCollapsed]}>
-          <View style={[styles.logoBox, { borderColor: colors.cardBorder }, isCompact && styles.logoBoxCompact]}>
-            <Image source={require('../assets/images/icon.png')} style={styles.logoImage} />
-          </View>
-          {!isSideCollapsed && (
-            <View>
-              <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-                NERV ERP
-              </Text>
-              <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-                {t('System Online')}
-              </Text>
-            </View>
-          )}
+  const renderLogo = () => (
+    <View style={[styles.logoSection, { borderBottomColor: colors.cardBorder }]}>
+      <View style={[styles.logoRow, isSideCollapsed && styles.logoRowCollapsed]}>
+        <View style={[styles.logoBox, { backgroundColor: `${colors.primaryPurple}33`, borderColor: `${colors.primaryPurple}4D` }]}>
+          <Feather name="activity" size={16} color={colors.primaryPurple} />
         </View>
-        {showToggle && (
-          <TouchableRipple
-            onPress={onToggle}
-            style={[styles.menuButton, { borderColor: colors.cardBorder }]}
-            rippleColor={`${colors.neonGreen}22`}
-          >
-            <View style={styles.menuButtonContent}>
-              <Feather name={toggleIcon} size={18} color={colors.neonGreen} />
-            </View>
-          </TouchableRipple>
+        {!isSideCollapsed && (
+          <View style={styles.logoText}>
+            <Text style={[styles.logoTitle, { color: colors.textPrimary }]}>NERV ERP</Text>
+            <Text style={[styles.logoSubtitle, { color: colors.textMuted }]}>{t('Enterprise')}</Text>
+          </View>
         )}
       </View>
     </View>
   );
 
   const renderNavigation = () => (
-    <View
-      style={[
-        styles.navigation,
-        isStacked && styles.navigationStacked,
-        isCompact && styles.navigationCompact,
-        isSideCollapsed && styles.navigationCollapsed,
-      ]}
-    >
+    <View style={[styles.navigation, isSideCollapsed && styles.navigationCollapsed]}>
       {navigationModules.map((module) => {
         const isActive = activeModule === module.id;
         return (
-          <TouchableRipple
+          <Pressable
             key={module.id}
             onPress={() => handleSelectModule(module.id)}
             testID={`sidebar-nav-${module.id}`}
-            style={[
-              styles.navButton,
-              {
-                borderColor: colors.cardBorder,
-                backgroundColor: isActive ? colors.hoverBg : colors.sidebarBgFrom,
-              },
-              isActive && { borderColor: colors.primaryPurple },
-              isStacked && styles.navButtonStacked,
-              isStacked && isCompact && styles.navButtonStackedCompact,
-              isCompact && styles.navButtonCompact,
-              isSideCollapsed && styles.navButtonCollapsed,
+            style={(state: any) => [
+              styles.navItem,
+              isSideCollapsed && styles.navItemCollapsed,
+              isActive && [styles.navItemActive, { backgroundColor: `${colors.primaryPurple}1F`, borderColor: `${colors.primaryPurple}33` }],
+              !isActive && { borderColor: 'transparent' },
+              !isActive && state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
+              state.pressed && styles.navItemPressed,
             ]}
-            rippleColor={`${colors.primaryPurple}22`}
           >
-            <View style={[styles.navButtonContent, isSideCollapsed && styles.navButtonContentCollapsed]}>
-              <Feather
-                name={module.icon as any}
-                size={20}
-                color={isActive ? colors.neonGreen : colors.textSecondary}
-              />
-              {!isSideCollapsed && (
-                <Text
-                  style={[
-                    styles.navButtonText,
-                    { color: isActive ? colors.neonGreen : colors.textSecondary },
-                    isCompact && styles.navButtonTextCompact,
-                  ]}
-                >
-                  {t(module.label)}
-                </Text>
-              )}
-            </View>
-          </TouchableRipple>
+            {(state: any) => (
+              <>
+                <Feather
+                  name={module.icon as any}
+                  size={16}
+                  color={isActive ? colors.primaryPurple : (state.hovered ? colors.textPrimary : colors.textMuted)}
+                />
+                {!isSideCollapsed && (
+                  <Text
+                    style={[
+                      styles.navItemLabel,
+                      { color: isActive ? colors.primaryPurple : (state.hovered ? colors.textPrimary : colors.textMuted) },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {t(module.label)}
+                  </Text>
+                )}
+                {!isSideCollapsed && isActive && (
+                  <View style={[styles.activeDot, { backgroundColor: colors.primaryPurple }]} />
+                )}
+              </>
+            )}
+          </Pressable>
         );
       })}
     </View>
   );
 
-  const renderMenuContent = () => (
-    <>
-      {/* User Profile */}
-      {showProfile && (
-        <View style={[styles.profileSection, { borderColor: colors.cardBorder }]}>
-          <View style={[styles.profileCard, { backgroundColor: `${colors.hoverBg}`, borderColor: `${colors.cardBorder}` }]}>
-            <View style={styles.avatarContainer}>
-              <Image
-                source={avatarSource}
-                style={[styles.avatar, { borderColor: colors.neonGreen }]}
-                onError={() => setAvatarError(true)}
-              />
-              <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, borderColor: colors.sidebarBgTo }]} />
-            </View>
-            <View style={styles.profileInfo}>
-              <Text style={[styles.profileName, { color: colors.textPrimary }]} numberOfLines={1}>
-                {displayName}
+  const renderBottom = () => (
+    <View style={[styles.bottomSection, { borderTopColor: colors.cardBorder }]}>
+      <Pressable
+        onPress={() => handleSelectModule('profile')}
+        testID="sidebar-nav-profile"
+        style={(state: any) => [
+          styles.navItem,
+          isSideCollapsed && styles.navItemCollapsed,
+          activeModule === 'profile' && [styles.navItemActive, { backgroundColor: `${colors.primaryPurple}1F`, borderColor: `${colors.primaryPurple}33` }],
+          !(activeModule === 'profile') && { borderColor: 'transparent' },
+          !(activeModule === 'profile') && state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
+          state.pressed && styles.navItemPressed,
+        ]}
+      >
+        {(state: any) => (
+          <>
+            <Feather
+              name="user"
+              size={16}
+              color={activeModule === 'profile' ? colors.primaryPurple : (state.hovered ? colors.textPrimary : colors.textMuted)}
+            />
+            {!isSideCollapsed && (
+              <Text style={[styles.navItemLabel, { color: activeModule === 'profile' ? colors.primaryPurple : (state.hovered ? colors.textPrimary : colors.textMuted) }]}>
+                {t('Profile')}
               </Text>
-              <Text style={[styles.profileRole, { color: colors.primaryPurple }]} numberOfLines={1}>
-                {displayRole}
-              </Text>
-            </View>
-          </View>
-        </View>
-      )}
+            )}
+          </>
+        )}
+      </Pressable>
 
-      {/* Theme Toggle */}
-      {!isSideCollapsed && (
-        <View style={[styles.themeSection, { borderColor: colors.cardBorder }, isCompact && styles.themeSectionCompact]}>
-          <ThemeToggle />
-        </View>
-      )}
+      <Pressable
+        onPress={onToggleCollapsed ?? (() => undefined)}
+        style={(state: any) => [
+          styles.navItem,
+          isSideCollapsed && styles.navItemCollapsed,
+          { borderColor: 'transparent' },
+          state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
+          state.pressed && styles.navItemPressed,
+        ]}
+      >
+        {(state: any) => (
+          <>
+            <Feather
+              name={isSideCollapsed ? 'chevron-right' : 'chevron-left'}
+              size={16}
+              color={state.hovered ? colors.textPrimary : colors.textMuted}
+            />
+            {!isSideCollapsed && (
+              <Text style={[styles.navItemLabel, { color: state.hovered ? colors.textPrimary : colors.textMuted }]}>{t('Collapse')}</Text>
+            )}
+          </>
+        )}
+      </Pressable>
 
-      {/* Navigation */}
-      {renderNavigation()}
-    </>
-  );
-
-  const renderFooter = () => (
-    <View
-      style={[
-        styles.footer,
-        {
-          borderColor: colors.cardBorder,
-          backgroundColor: colors.sidebarBgTo,
-          borderTopWidth: isStacked ? 2 : 2,
-        },
-        isStacked && styles.footerStacked,
-        isCompact && styles.footerCompact,
-      ]}
-    >
-      {isSideCollapsed ? (
-        <IconButton
-          icon={() => <Feather name="log-out" size={16} color={colors.accentOrange} />}
-          size={18}
-          onPress={logout}
-          testID="sidebar-logout"
-          style={[styles.actionButton, { borderColor: colors.cardBorder }]}
-        />
-      ) : (
-        <>
-          <TouchableRipple
-            style={[
-              styles.logoutButton,
-              isStacked && styles.logoutButtonStacked,
-              isCompact && styles.logoutButtonCompact,
-            ]}
-            onPress={logout}
-            rippleColor={`${colors.accentOrange}22`}
-            testID="sidebar-logout"
-          >
-            <View style={styles.logoutContent}>
-              <Feather name="log-out" size={16} color={colors.accentOrange} />
-              <Text style={[styles.logoutText, { color: colors.accentOrange }]}>{t('Logout')}</Text>
-            </View>
-          </TouchableRipple>
-          <View style={[styles.statusDot, { backgroundColor: colors.neonGreen, position: 'relative' }]} />
-          <Text style={[styles.footerText, { color: colors.textMuted }]} numberOfLines={1}>
-            {t('System Status: Active')}
-          </Text>
-        </>
-      )}
+      <Pressable
+        onPress={logout}
+        testID="sidebar-logout"
+        style={(state: any) => [
+          styles.navItem,
+          isSideCollapsed && styles.navItemCollapsed,
+          { borderColor: 'transparent' },
+          state.hovered && { backgroundColor: 'rgba(255,255,255,0.05)' },
+          state.pressed && styles.navItemPressed,
+        ]}
+      >
+        <Feather name="log-out" size={16} color={colors.accentOrange} />
+        {!isSideCollapsed && (
+          <Text style={[styles.navItemLabel, { color: colors.accentOrange }]}>{t('Logout')}</Text>
+        )}
+      </Pressable>
     </View>
   );
 
   if (isDrawerLayout) {
     return (
-      <View
-        style={[
-          styles.container,
-          styles.compactContainer,
-          {
-            backgroundColor: colors.sidebarBgFrom,
-            borderColor: colors.cardBorder,
-            width: '100%',
-            borderRightWidth: 0,
-            borderBottomWidth: 2,
-          },
-        ]}
-      >
-        <View style={[styles.topBar, { borderColor: colors.cardBorder }]}>
-          <View style={[styles.logoContainer, styles.topBarLogo]}>
-            <View style={[styles.logoBox, { borderColor: colors.cardBorder }, styles.logoBoxCompact]}>
-              <Image source={require('../assets/images/icon.png')} style={styles.logoImage} />
+      <Portal>
+        {drawerOpen && (
+          <Pressable
+            style={styles.drawerBackdrop}
+            onPress={() => setDrawerOpen(false)}
+          />
+        )}
+        <View
+          style={[
+            styles.drawerSlide,
+            { backgroundColor: colors.sidebarBg, borderRightColor: colors.cardBorder },
+            drawerOpen ? styles.drawerSlideOpen : styles.drawerSlideClosed,
+          ]}
+        >
+          <View style={[styles.drawerHeader, { borderBottomColor: colors.cardBorder }]}>
+            <View style={styles.logoRow}>
+              <View style={[styles.logoBox, { backgroundColor: `${colors.primaryPurple}33`, borderColor: `${colors.primaryPurple}4D` }]}>
+                <Feather name="activity" size={16} color={colors.primaryPurple} />
+              </View>
+              <View style={styles.logoText}>
+                <Text style={[styles.logoTitle, { color: colors.textPrimary }]}>NERV ERP</Text>
+                <Text style={[styles.logoSubtitle, { color: colors.textMuted }]}>{t('Enterprise')}</Text>
+              </View>
             </View>
-            <View>
-              <Text style={[styles.title, { color: colors.neonGreen }, styles.titleCompact]}>NERV ERP</Text>
-              <Text style={[styles.subtitle, { color: colors.textSecondary }, styles.subtitleCompact]}>
-                {t('System Online')}
-              </Text>
-            </View>
+            <IconButton
+              icon={() => <Feather name="x" size={18} color={colors.textMuted} />}
+              size={18}
+              onPress={() => setDrawerOpen(false)}
+            />
           </View>
-          <View style={styles.topBarActions}>
-            <IconButton
-              icon={() => (
-                <Feather name={theme === 'light' ? 'sun' : 'moon'} size={16} color={colors.neonGreen} />
-              )}
-              size={18}
-              onPress={toggleTheme}
-              style={[styles.actionButton, { borderColor: colors.cardBorder }]}
-            />
-            <IconButton
-              icon={() => <Feather name="log-out" size={16} color={colors.accentOrange} />}
-              size={18}
+          <ScrollView style={styles.drawerScroll}>
+            {renderNavigation()}
+          </ScrollView>
+          {renderBottom()}
+        </View>
+      </Portal>
+    );
+  }
+
+  if (isStacked) {
+    return (
+      <View style={[styles.stackedContainer, { backgroundColor: colors.sidebarBg, borderBottomColor: colors.cardBorder }]}>
+        <View style={[styles.stackedHeader, { borderBottomColor: colors.cardBorder }]}>
+          {renderLogo()}
+          <View style={styles.stackedHeaderActions}>
+            <Pressable
+              onPress={() => handleSelectModule('profile')}
+              testID="sidebar-nav-profile-stacked"
+              style={({ pressed }) => [
+                styles.stackedActionBtn,
+                activeModule === 'profile' && { backgroundColor: `${colors.primaryPurple}1F` },
+                pressed && styles.navItemPressed,
+              ]}
+            >
+              <Feather name="user" size={16} color={activeModule === 'profile' ? colors.primaryPurple : colors.textMuted} />
+            </Pressable>
+            <Pressable
               onPress={logout}
-              style={[styles.actionButton, { borderColor: colors.cardBorder }]}
-            />
-            <IconButton
-              icon={() => <Feather name="menu" size={18} color={colors.neonGreen} />}
-              size={20}
-              onPress={() => setDrawerOpen(true)}
-              testID="sidebar-menu"
-              style={[styles.menuButton, { borderColor: colors.cardBorder }]}
-            />
+              testID="sidebar-logout-stacked"
+              style={({ pressed }) => [
+                styles.stackedActionBtn,
+                pressed && styles.navItemPressed,
+              ]}
+            >
+              <Feather name="log-out" size={16} color={colors.accentOrange} />
+            </Pressable>
+            <Pressable
+              onPress={onToggleCollapsed ?? (() => undefined)}
+              style={({ pressed }) => [styles.stackedToggleBtn, { borderColor: colors.cardBorder }, pressed && styles.navItemPressed]}
+            >
+              <Feather name={isStackedCollapsed ? 'chevron-down' : 'chevron-up'} size={18} color={colors.textMuted} />
+            </Pressable>
           </View>
         </View>
-
-        <Portal>
-          <Modal
-            visible={drawerOpen}
-            onDismiss={() => setDrawerOpen(false)}
-            contentContainerStyle={styles.drawerBackdrop}
-          >
-            <Surface
-              style={[
-                styles.drawerPanel,
-                { backgroundColor: colors.sidebarBgFrom, borderColor: colors.cardBorder },
-              ]}
-              elevation={2}
-            >
-              {renderHeader(true, 'x', () => setDrawerOpen(false))}
-              <ScrollView style={styles.drawerScroll} contentContainerStyle={styles.drawerContent}>
-                {renderMenuContent()}
-              </ScrollView>
-              {renderFooter()}
-            </Surface>
-          </Modal>
-        </Portal>
+        {!isStackedCollapsed && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stackedNav}>
+            {navigationModules.map((module) => {
+              const isActive = activeModule === module.id;
+              return (
+                <Pressable
+                  key={module.id}
+                  onPress={() => handleSelectModule(module.id)}
+                  style={({ pressed }) => [
+                    styles.stackedNavItem,
+                    isActive && { backgroundColor: `${colors.primaryPurple}1F`, borderColor: `${colors.primaryPurple}33` },
+                    !isActive && { borderColor: 'transparent' },
+                    pressed && styles.navItemPressed,
+                  ]}
+                >
+                  <Feather name={module.icon as any} size={16} color={isActive ? colors.primaryPurple : colors.textMuted} />
+                  <Text style={[styles.stackedNavLabel, { color: isActive ? colors.primaryPurple : colors.textMuted }]} numberOfLines={1}>
+                    {t(module.label)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
       </View>
     );
   }
 
   return (
-    <Surface
-      style={[
-        styles.container,
-        {
-          backgroundColor: colors.sidebarBgFrom,
-          borderColor: colors.cardBorder,
-          width: isStacked ? '100%' : baseSidebarWidth,
-          borderRightWidth: isStacked ? 0 : 2,
-          borderBottomWidth: isStacked ? 2 : 0,
-        },
-      ]}
-      elevation={0}
-    >
-      <ScrollView style={styles.scrollView} contentContainerStyle={isStacked ? styles.scrollContent : undefined}>
-        {renderHeader(
-          true,
-          isStacked
-            ? isStackedCollapsed
-              ? 'chevrons-down'
-              : 'chevrons-up'
-            : isSideCollapsed
-              ? 'chevrons-right'
-              : 'chevrons-left',
-          onToggleCollapsed ?? (() => undefined),
-        )}
-        {!isStackedCollapsed && renderMenuContent()}
+    <View style={[styles.container, { backgroundColor: colors.sidebarBg, width: baseSidebarWidth, borderRightColor: colors.cardBorder }]}>
+      {renderLogo()}
+      <ScrollView style={styles.navScroll} showsVerticalScrollIndicator={false}>
+        {renderNavigation()}
       </ScrollView>
-      {!isStackedCollapsed && renderFooter()}
-    </Surface>
+      {renderBottom()}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    width: 270,
     borderRightWidth: 1,
     flexDirection: 'column',
     flexShrink: 0,
+    ...Platform.select({ web: { transition: 'width 0.3s ease' } as any, default: {} }),
   },
-  compactContainer: {
-    flexShrink: 0,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 16,
-  },
-  header: {
-    padding: 24,
+  logoSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  headerRow: {
+  logoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logoRowCollapsed: {
+    justifyContent: 'center',
+  },
+  logoBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoText: {
+    flexShrink: 1,
+  },
+  logoTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  logoSubtitle: {
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+  },
+  navScroll: {
+    flex: 1,
+  },
+  navigation: {
+    padding: 12,
+    gap: 2,
+  },
+  navigationCollapsed: {
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' } as any, default: {} }),
+  },
+  navItemCollapsed: {
+    width: '100%',
+    justifyContent: 'center',
+    paddingHorizontal: 0,
+  },
+  navItemActive: {
+    borderWidth: 1,
+  },
+  navItemPressed: {
+    opacity: 0.7,
+  },
+  navItemLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  bottomSection: {
+    borderTopWidth: 1,
+    padding: 12,
+    gap: 2,
+  },
+  drawerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 40,
+  },
+  drawerSlide: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 280,
+    borderRightWidth: 1,
+    zIndex: 50,
+    flexDirection: 'column',
+    ...Platform.select({ web: { transition: 'transform 0.3s ease' } as any, default: {} }),
+  },
+  drawerSlideOpen: {
+    ...Platform.select({ web: { transform: [{ translateX: 0 }] } as any, default: { transform: [{ translateX: 0 }] } }),
+  },
+  drawerSlideClosed: {
+    ...Platform.select({ web: { transform: [{ translateX: -280 }] } as any, default: { transform: [{ translateX: -280 }] } }),
+  },
+  drawerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
-  },
-  headerCompact: {
-    padding: 16,
-  },
-  headerCollapsed: {
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-  },
-  headerRowCollapsed: {
-    flexDirection: 'column',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  logoContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  logoContainerCollapsed: {
-    gap: 0,
-  },
-  topBarLogo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  logoBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  logoBoxCompact: {
-    width: 36,
-    height: 36,
-    borderRadius: 6,
-  },
-  logoImage: {
-    width: '100%',
-    height: '100%',
-  },
-  title: {
-    fontSize: 16,
-    letterSpacing: 1,
-  },
-  titleCompact: {
-    fontSize: 14,
-    letterSpacing: 1.4,
-  },
-  subtitle: {
-    fontSize: 10,
-  },
-  subtitleCompact: {
-    fontSize: 9,
-  },
-  menuButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuButtonContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topBar: {
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  topBarActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  actionButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  drawerBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(6, 8, 18, 0.55)',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  drawerPanel: {
-    borderRadius: 20,
-    borderWidth: 1,
-    overflow: 'hidden',
-    maxHeight: '92%',
-    width: '100%',
   },
   drawerScroll: {
     flex: 1,
   },
-  drawerContent: {
-    paddingBottom: 12,
+  stackedToggleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  profileSection: {
-    padding: 16,
+  stackedContainer: {
     borderBottomWidth: 1,
   },
-  profileCard: {
+  stackedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    borderRadius: 14,
+    justifyContent: 'space-between',
+    paddingRight: 12,
+  },
+  stackedNav: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  stackedNavItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
     borderWidth: 1,
-    gap: 12,
   },
-  avatarContainer: {
-    position: 'relative',
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 2,
-  },
-  statusDot: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  profileName: {
-    fontSize: 14,
+  stackedNavLabel: {
+    fontSize: 12,
     fontWeight: '500',
   },
-  profileRole: {
-    fontSize: 10,
-    marginTop: 2,
-  },
-  themeSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-  },
-  themeSectionCompact: {
-    padding: 12,
-  },
-  navigation: {
-    padding: 16,
-    gap: 8,
-  },
-  navigationCollapsed: {
-    paddingHorizontal: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  navigationCompact: {
-    padding: 12,
-  },
-  navigationStacked: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 0,
-  },
-  navButton: {
+  stackedHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    minHeight: 48,
+    gap: 4,
   },
-  navButtonCollapsed: {
-    width: '100%',
+  stackedActionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 0,
-    minHeight: 44,
-  },
-  navButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    width: '100%',
-  },
-  navButtonContentCollapsed: {
-    justifyContent: 'center',
-    gap: 0,
-  },
-  navButtonCompact: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  navButtonStacked: {
-    width: '48.8%',
-    maxWidth: '48.8%',
-    flexGrow: 0,
-    marginBottom: 10,
-  },
-  navButtonStackedCompact: {
-    width: '100%',
-    maxWidth: '100%',
-    marginBottom: 8,
-  },
-  navButtonText: {
-    fontSize: 14,
-    letterSpacing: 0.2,
-  },
-  navButtonTextCompact: {
-    fontSize: 13,
-  },
-  footer: {
-    padding: 16,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flexWrap: 'wrap',
-  },
-  footerCompact: {
-    padding: 12,
-    gap: 8,
-  },
-  footerStacked: {
-    justifyContent: 'space-between',
-  },
-  footerText: {
-    fontSize: 10,
-    flexShrink: 1,
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  logoutContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  logoutButtonStacked: {
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-  },
-  logoutButtonCompact: {
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-  },
-  logoutText: {
-    fontSize: 12,
   },
 });

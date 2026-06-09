@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Button, Card, Chip, HelperText, IconButton, Searchbar, Switch, Text, TextInput } from './ui/Paper';
+import { StatusBadge } from './StatusBadge';
+import { Button, HelperText, IconButton, Searchbar, Switch, Text, TextInput } from './ui/Paper';
+import { SegmentedControl } from './SegmentedControl';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
@@ -218,22 +220,63 @@ export function PayableBills() {
     }
   };
 
+  const payableSummary = useMemo(() => {
+    const pending = bills.filter((b) => !b.isPaid);
+    const pendingTotal = pending.reduce((s, b) => s + (typeof b.amount === 'number' ? b.amount : 0), 0);
+    const paidTotal = bills.filter((b) => b.isPaid).reduce((s, b) => s + (typeof b.amount === 'number' ? b.amount : 0), 0);
+    const nextDue = pending
+      .filter((b) => b.dueDate)
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0];
+    return { pendingTotal, paidTotal, nextDue };
+  }, [bills]);
+
   if (loading) {
-    return <NervLoader variant="payables" fullScreen label={t('Syncing Payables')} subtitle={t('Loading payable bills...')} />;
+    return <NervLoader variant="payables" fullScreen label={t('Loading')} subtitle={t('Fetching payable bills...')} />;
   }
 
   return (
     <>
       <ScrollView style={styles.container}>
         <View style={[styles.content, { padding: contentPadding }]}>
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-              {t('PAYABLE BILLS')}
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-              {t('Manage accounts payable and payment status')}
-            </Text>
-            <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
+          <View style={[styles.header, !isCompact && styles.headerRow]}>
+            <View>
+              <Text style={[styles.title, { color: colors.textPrimary }, isCompact && styles.titleCompact]}>
+                {t('Payables')}
+              </Text>
+              <Text style={[styles.subtitle, { color: colors.textMuted }, isCompact && styles.subtitleCompact]}>
+                {t('Vendor expenses and outgoing payments')}
+              </Text>
+            </View>
+            {!isCompact && (
+              <Button
+                mode="contained"
+                onPress={openCreateModal}
+                buttonColor={colors.primaryPurple}
+                textColor="#fff"
+                icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
+                style={styles.createButton}
+              >
+                {t('Record Expense')}
+              </Button>
+            )}
+          </View>
+
+          {/* Pending Summary */}
+          <View style={[styles.pendingSummary, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+            <View style={styles.pendingLeft}>
+              <Text style={[styles.pendingLabel, { color: colors.textMuted }]}>{t('Pending this month')}</Text>
+              <Text style={[styles.pendingValue, { color: colors.accentOrange }]}>
+                {formatCurrency(payableSummary.pendingTotal, currency)}
+              </Text>
+            </View>
+            {payableSummary.nextDue && (
+              <View style={styles.pendingRight}>
+                <Text style={[styles.pendingNextLabel, { color: colors.textMuted }]}>{t('Next due')}</Text>
+                <Text style={[styles.pendingNextValue, { color: colors.textPrimary }]}>
+                  {formatDateLabel(payableSummary.nextDue.dueDate)} — {payableSummary.nextDue.description}
+                </Text>
+              </View>
+            )}
           </View>
 
           <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
@@ -259,7 +302,7 @@ export function PayableBills() {
               mode="contained"
               onPress={openCreateModal}
               buttonColor={colors.primaryPurple}
-              textColor={colors.neonGreen}
+              textColor="#fff"
               icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
               style={styles.createButton}
             >
@@ -267,68 +310,12 @@ export function PayableBills() {
             </Button>
           </View>
 
-          <View style={[styles.filterRow, isCompact && styles.filterRowCompact]}>
-            <Chip
-              selected={statusFilter === 'all'}
-              showSelectedCheck={false}
-              icon={
-                statusFilter === 'all'
-                  ? ({ size }) => <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                  : undefined
-              }
-              onPress={() => setStatusFilter('all')}
-              style={[
-                styles.filterChip,
-                {
-                  backgroundColor: statusFilter === 'all' ? colors.primaryPurple : colors.cardBgFrom,
-                  borderColor: statusFilter === 'all' ? colors.primaryPurple : colors.cardBorder,
-                },
-              ]}
-              textStyle={{ color: statusFilter === 'all' ? colors.neonGreen : colors.textSecondary }}
-            >
-              {t('All')}
-            </Chip>
-            <Chip
-              selected={statusFilter === 'open'}
-              showSelectedCheck={false}
-              icon={
-                statusFilter === 'open'
-                  ? ({ size }) => <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                  : undefined
-              }
-              onPress={() => setStatusFilter('open')}
-              style={[
-                styles.filterChip,
-                {
-                  backgroundColor: statusFilter === 'open' ? colors.primaryPurple : colors.cardBgFrom,
-                  borderColor: statusFilter === 'open' ? colors.primaryPurple : colors.cardBorder,
-                },
-              ]}
-              textStyle={{ color: statusFilter === 'open' ? colors.neonGreen : colors.textSecondary }}
-            >
-              {t('Open')}
-            </Chip>
-            <Chip
-              selected={statusFilter === 'paid'}
-              showSelectedCheck={false}
-              icon={
-                statusFilter === 'paid'
-                  ? ({ size }) => <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                  : undefined
-              }
-              onPress={() => setStatusFilter('paid')}
-              style={[
-                styles.filterChip,
-                {
-                  backgroundColor: statusFilter === 'paid' ? colors.primaryPurple : colors.cardBgFrom,
-                  borderColor: statusFilter === 'paid' ? colors.primaryPurple : colors.cardBorder,
-                },
-              ]}
-              textStyle={{ color: statusFilter === 'paid' ? colors.neonGreen : colors.textSecondary }}
-            >
-              {t('Paid')}
-            </Chip>
-          </View>
+          <SegmentedControl
+            options={['all', 'open', 'paid'] as BillFilter[]}
+            selected={statusFilter}
+            onSelect={setStatusFilter}
+            labelFn={(v) => v === 'all' ? t('All') : v === 'open' ? t('Open') : t('Paid')}
+          />
 
           <View style={[styles.paginationRow, isCompact && styles.paginationRowCompact]}>
             <Button
@@ -379,77 +366,67 @@ export function PayableBills() {
           )}
 
           <View style={styles.billList}>
-            {filteredBills.map((bill) => (
-              <Card
-                key={bill.id ?? `${bill.description}-${bill.dueDate}`}
-                mode="outlined"
-                style={[styles.billCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-              >
-                <Card.Content style={styles.billCardContent}>
-                  <View style={[styles.billHeader, isCompact && styles.billHeaderCompact]}>
-                    <View style={styles.billInfo}>
-                      <Text style={[styles.billDescription, { color: colors.textPrimary }]}>{bill.description}</Text>
-                      <Text style={[styles.billId, { color: colors.textMuted }]}>#{bill.id ?? t('N/A')}</Text>
-                    </View>
-                    <Chip
-                      style={[
-                        styles.statusChip,
-                        { backgroundColor: bill.isPaid ? `${colors.neonGreen}20` : `${colors.accentOrange}20` },
-                      ]}
-                      textStyle={{ color: bill.isPaid ? colors.neonGreen : colors.accentOrange }}
-                    >
-                      {bill.isPaid ? t('Paid') : t('Open')}
-                    </Chip>
+            {filteredBills.map((bill) => {
+              const billIsPaid = bill.isPaid;
+              return (
+                <Pressable
+                  key={bill.id ?? `${bill.description}-${bill.dueDate}`}
+                  style={(state: any) => [
+                    styles.billRow,
+                    { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
+                    billIsPaid && styles.billRowPaid,
+                    !billIsPaid && state.hovered && { borderColor: `${colors.primaryPurple}33` },
+                  ]}
+                >
+                  <View style={[styles.billIconBox, { backgroundColor: `${colors.sidebarBgTo ?? colors.textMuted}20` }]}>
+                    <Feather name="home" size={16} color={colors.textMuted} />
                   </View>
 
-                  <View style={styles.metaRow}>
-                    <View style={styles.metaItem}>
-                      <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{t('Due date')}</Text>
-                      <Text style={[styles.metaValue, { color: colors.textPrimary }]}>{formatDateLabel(bill.dueDate)}</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{t('Amount')}</Text>
-                      <Text style={[styles.metaValue, { color: colors.neonGreen }]}>
-                        {formatCurrency(bill.amount, currency)}
-                      </Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{t('Paid at')}</Text>
-                      <Text style={[styles.metaValue, { color: colors.textPrimary }]}>
-                        {bill.paidAt ? formatDateLabel(bill.paidAt) : '--'}
-                      </Text>
-                    </View>
+                  <View style={styles.billInfo}>
+                    <Text style={[styles.billDescription, { color: colors.textPrimary }]} numberOfLines={1}>
+                      {bill.description}
+                    </Text>
+                    <Text style={[styles.billMeta, { color: colors.textMuted }]}>
+                      {t('Due')} {formatDateLabel(bill.dueDate)}
+                    </Text>
                   </View>
 
-                  <View style={[styles.cardActions, isCompact && styles.cardActionsCompact]}>
+                  <Text style={[styles.billAmount, { color: colors.textPrimary }]}>
+                    {formatCurrency(bill.amount, currency)}
+                  </Text>
+
+                  <StatusBadge status={billIsPaid ? 'paid' : 'open'} label={billIsPaid ? t('Paid') : t('Open')} />
+
+                  {!billIsPaid && (
                     <Button
                       mode="outlined"
                       onPress={() => togglePaid(bill)}
-                      textColor={bill.isPaid ? colors.accentOrange : colors.neonGreen}
-                      style={[styles.actionButton, { borderColor: colors.cardBorder }]}
+                      textColor={colors.neonGreen}
+                      style={[styles.markPaidButton, { borderColor: `${colors.neonGreen}40`, backgroundColor: `${colors.neonGreen}1A` }]}
+                      compact
+                      labelStyle={styles.markPaidLabel}
                     >
-                      {bill.isPaid ? t('Mark Open') : t('Mark Paid')}
+                      {t('Mark Paid')}
                     </Button>
-                    <Button
-                      mode="outlined"
+                  )}
+
+                  <View style={styles.billActionIcons}>
+                    <IconButton
+                      icon={() => <Feather name="edit-2" size={14} color={colors.textSecondary} />}
+                      size={16}
                       onPress={() => openEditModal(bill)}
-                      textColor={colors.textSecondary}
-                      style={[styles.actionButton, { borderColor: colors.cardBorder }]}
-                    >
-                      {t('Edit')}
-                    </Button>
-                    <Button
-                      mode="outlined"
+                      style={[styles.billActionIcon, { borderColor: colors.cardBorder }]}
+                    />
+                    <IconButton
+                      icon={() => <Feather name="trash-2" size={14} color={colors.accentOrange} />}
+                      size={16}
                       onPress={() => confirmDelete(bill)}
-                      textColor={colors.accentOrange}
-                      style={[styles.actionButton, { borderColor: colors.accentOrange }]}
-                    >
-                      {t('Delete')}
-                    </Button>
+                      style={[styles.billActionIcon, { borderColor: colors.cardBorder }]}
+                    />
                   </View>
-                </Card.Content>
-              </Card>
-            ))}
+                </Pressable>
+              );
+            })}
           </View>
         </View>
       </ScrollView>
@@ -464,7 +441,7 @@ export function PayableBills() {
             ]}
           >
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.neonGreen }]}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
                 {editingBill ? t('Edit Payable Bill') : t('Create Payable Bill')}
               </Text>
               <IconButton
@@ -477,21 +454,21 @@ export function PayableBills() {
 
             <TextInput
               mode="outlined"
-              label={t('Description')}
+              label={`${t('Description')} *`}
               value={description}
               onChangeText={setDescription}
               style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
             />
             <TextInput
               mode="outlined"
-              label={t('Due Date (MM/DD/YYYY)')}
+              label={`${t('Due Date (MM/DD/YYYY)')} *`}
               value={dueDateInput}
               onChangeText={setDueDateInput}
               style={[styles.input, { backgroundColor: colors.inputBgFrom }]}
             />
             <TextInput
               mode="outlined"
-              label={t('Amount')}
+              label={`${t('Amount')} *`}
               value={amountInput}
               onChangeText={setAmountInput}
               keyboardType="numeric"
@@ -523,7 +500,7 @@ export function PayableBills() {
                 loading={saving}
                 disabled={saving}
                 buttonColor={colors.primaryPurple}
-                textColor={colors.neonGreen}
+                textColor="#fff"
                 style={styles.modalButton}
               >
                 {editingBill ? t('Save') : t('Create')}
@@ -548,32 +525,66 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  pendingSummary: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  pendingLeft: {
+    flexShrink: 0,
+  },
+  pendingLabel: {
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    fontWeight: '500',
+  },
+  pendingValue: {
+    fontSize: 24,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    marginTop: 4,
+  },
+  pendingRight: {
+    alignItems: 'flex-end',
+  },
+  pendingNextLabel: {
+    fontSize: 12,
+  },
+  pendingNextValue: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 4,
+  },
   title: {
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0.4,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.3,
     marginBottom: 6,
-    lineHeight: 36,
+    lineHeight: 30,
   },
   titleCompact: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-    lineHeight: 30,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    lineHeight: 26,
   },
   subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 10,
+    fontSize: 13,
+    lineHeight: 18,
   },
   subtitleCompact: {
     fontSize: 13,
     lineHeight: 18,
-  },
-  headerLine: {
-    height: 4,
-    width: 120,
-    borderRadius: 2,
   },
   actionRow: {
     flexDirection: 'row',
@@ -588,7 +599,7 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     minHeight: 50,
     minWidth: 220,
   },
@@ -596,28 +607,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   refreshButton: {
-    borderRadius: 14,
+    borderRadius: 12,
     minHeight: 50,
   },
   createButton: {
-    borderRadius: 14,
+    borderRadius: 12,
     minHeight: 50,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-    flexWrap: 'wrap',
-  },
-  filterRowCompact: {
-    gap: 10,
-  },
-  filterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
   },
   paginationRow: {
     flexDirection: 'row',
@@ -640,7 +635,7 @@ const styles = StyleSheet.create({
   banner: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -649,7 +644,7 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     gap: 8,
@@ -664,66 +659,66 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   billList: {
-    gap: 12,
+    gap: 8,
   },
-  billCard: {
-    borderRadius: 10,
-  },
-  billCardContent: {
-    paddingVertical: 8,
-    gap: 10,
-  },
-  billHeader: {
+  billRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
+    gap: 16,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    ...Platform.select({ web: { transition: 'border-color 0.15s ease' } as any, default: {} }),
   },
-  billHeaderCompact: {
-    flexDirection: 'column',
-    alignItems: 'flex-start',
+  billRowPaid: {
+    opacity: 0.5,
+  },
+  billIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
   billInfo: {
     flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   billDescription: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '500',
   },
-  billId: {
-    fontSize: 11,
+  billMeta: {
+    fontSize: 12,
   },
-  statusChip: {
-    borderRadius: 16,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    gap: 12,
-    flexWrap: 'wrap',
-  },
-  metaItem: {
-    minWidth: 110,
-    gap: 2,
-  },
-  metaLabel: {
-    fontSize: 11,
-  },
-  metaValue: {
-    fontSize: 13,
+  billAmount: {
+    fontSize: 14,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    flexShrink: 0,
   },
-  cardActions: {
+  markPaidButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    flexShrink: 0,
+  },
+  markPaidLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  billActionIcons: {
     flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
+    gap: 4,
+    flexShrink: 0,
   },
-  cardActionsCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-  },
-  actionButton: {
+  billActionIcon: {
+    width: 30,
+    height: 30,
     borderRadius: 8,
+    borderWidth: 1,
+    margin: 0,
   },
   modalBackdrop: {
     flex: 1,
@@ -735,7 +730,7 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 560,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     padding: 16,
     gap: 6,
@@ -755,7 +750,7 @@ const styles = StyleSheet.create({
   },
   modalCloseButton: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   input: {
     marginTop: 6,

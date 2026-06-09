@@ -1,18 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Button, Card, Chip, IconButton, Searchbar } from './ui/Paper';
-import { WebView } from 'react-native-webview';
+import { StatusBadge } from './StatusBadge';
+import { Button, IconButton, Searchbar } from './ui/Paper';
 import { useTheme } from '../contexts/ThemeContext';
+
+let WebView: React.ComponentType<any> | null = null;
+if (Platform.OS !== 'web') {
+  try {
+    WebView = require('react-native-webview').WebView;
+  } catch {}
+}
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { useI18n } from '../contexts/I18nContext';
 import { Bill as BillModel, ErpService, Order as OrderModel } from '../services/erpService';
 import { NervLoader } from './NervLoader';
 import { useResponsive } from '../hooks/useResponsive';
 import { formatCurrency } from '../utils/currency';
 import { useBillsOrders } from '../hooks/bills/useBillsOrders';
-import { filterOrdersBySearch, getOrderStatusColor, openPdfInBrowser } from '../utils/bills/helpers';
-import { formatUsDateTime } from '../utils/datetime';
+import { filterOrdersBySearch, openPdfInBrowser } from '../utils/bills/helpers';
+import { formatUsDate, formatUsDateTime } from '../utils/datetime';
 
 type BillMode = 'view' | 'generate';
 
@@ -20,15 +28,16 @@ export function Bills() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const { client, isAuthenticated, loading: authLoading, enterpriseId, currency } = useAuth();
+  const { showToast } = useToast();
   const erpService = useMemo(() => new ErpService(client), [client]);
   const { isCompact, isTablet, contentPadding } = useResponsive();
   const {
     searchTerm,
     setSearchTerm,
     orders,
+    bills,
     loading,
     errorMessage,
-    setErrorMessage,
     pageNumber,
     setPageNumber,
     hasMore,
@@ -52,6 +61,10 @@ export function Bills() {
   const [pdfDataUri, setPdfDataUri] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (errorMessage) showToast(errorMessage);
+  }, [errorMessage]);
 
   useEffect(() => {
     if (!detailsVisible || !detailsOrder?.id) {
@@ -110,7 +123,7 @@ export function Bills() {
 
   const openDetails = (order: OrderModel, mode: BillMode) => {
     if (!isAuthenticated || authLoading) {
-      setErrorMessage(t('Authenticate to manage bills.'));
+      showToast(t('Authenticate to manage bills.'), 'warning');
       return;
     }
     setDetailsOrder(order);
@@ -158,13 +171,41 @@ export function Bills() {
     }
   };
 
+  const billSummary = useMemo(() => {
+    const activeOrders = orders.filter((o) => o.isActive !== false);
+    const now = new Date();
+    let paidAmount = 0;
+    let overdueAmount = 0;
+    let outstandingAmount = 0;
+
+    for (const o of activeOrders) {
+      const bill = o.id != null ? bills.get(String(o.id)) : undefined;
+      const amount = bill ? bill.amount : (typeof o.total === 'number' ? o.total : 0);
+      const hasPaid = (o.payday != null && o.payday !== '') || (o.paymentDate != null && o.paymentDate !== '');
+
+      if (hasPaid) {
+        paidAmount += amount;
+      } else {
+        const dueDateStr = bill?.dueDate ?? o.paymentScheduledDate ?? null;
+        const dueDate = dueDateStr ? new Date(dueDateStr) : null;
+        if (dueDate && dueDate < now) {
+          overdueAmount += amount;
+        } else {
+          outstandingAmount += amount;
+        }
+      }
+    }
+
+    return { totalOrders: activeOrders.length, paidAmount, overdueAmount, outstandingAmount };
+  }, [orders, bills]);
+
   if (loading) {
     return (
       <NervLoader
         variant="bills"
         fullScreen
-        label={t('Synchronizing EVA-02')}
-        subtitle={t('Generating bill streams...')}
+        label={t('Loading')}
+        subtitle={t('Fetching bill data...')}
       />
     );
   }
@@ -173,14 +214,54 @@ export function Bills() {
     <>
       <ScrollView style={styles.container}>
         <View style={[styles.content, { padding: contentPadding }]}>
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-              {t('BILLS CENTER')}
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-              {t('Generate and review bills per order')}
-            </Text>
-            <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
+          <View style={[styles.header, !isCompact && styles.headerRow]}>
+            <View>
+              <Text style={[styles.title, { color: colors.textPrimary }, isCompact && styles.titleCompact]}>
+                {t('Receivables')}
+              </Text>
+              <Text style={[styles.subtitle, { color: colors.textMuted }, isCompact && styles.subtitleCompact]}>
+                {t('Outstanding invoices and payment tracking')}
+              </Text>
+            </View>
+            {!isCompact && (
+              <View style={styles.headerActions}>
+                <Button
+                  mode="outlined"
+                  onPress={() => setPageNumber(1)}
+                  textColor={colors.textSecondary}
+                  icon={({ size }) => <Feather name="download" size={size} color={colors.textSecondary} />}
+                  style={[styles.headerBtnOutlined, { borderColor: colors.cardBorder }]}
+                  contentStyle={styles.headerBtnContent}
+                >
+                  {t('Export')}
+                </Button>
+                <Button
+                  mode="contained"
+                  onPress={() => {}}
+                  buttonColor={colors.primaryPurple}
+                  textColor="#fff"
+                  icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
+                  style={styles.headerBtn}
+                  contentStyle={styles.headerBtnContent}
+                >
+                  {t('New Invoice')}
+                </Button>
+              </View>
+            )}
+          </View>
+
+          {/* Summary Cards */}
+          <View style={[styles.summaryRow, isCompact && styles.summaryRowCompact]}>
+            {[
+              { label: t('Outstanding'), value: formatCurrency(billSummary.outstandingAmount, currency), accent: colors.accentOrange },
+              { label: t('Overdue'), value: formatCurrency(billSummary.overdueAmount, currency), accent: colors.destructive },
+              { label: t('Paid'), value: formatCurrency(billSummary.paidAmount, currency), accent: colors.neonGreen },
+            ].map(({ label, value, accent }) => (
+              <View key={label} style={[styles.summaryCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+                <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>{label}</Text>
+                <Text style={[styles.summaryValue, { color: accent }]}>{value}</Text>
+              </View>
+            ))}
           </View>
 
           <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
@@ -247,12 +328,6 @@ export function Bills() {
             </View>
           )}
 
-          {errorMessage && (
-            <View style={[styles.banner, { backgroundColor: `${colors.accentOrange}20`, borderColor: colors.accentOrange }]}>
-              <Text style={[styles.bannerText, { color: colors.accentOrange }]}>{errorMessage}</Text>
-            </View>
-          )}
-
           {!loading && filteredOrders.length === 0 && (
             <View style={[styles.emptyState, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
               <Feather name="file-text" size={20} color={colors.textMuted} />
@@ -263,84 +338,80 @@ export function Bills() {
             </View>
           )}
 
-          <View style={styles.orderList}>
+          <View style={[styles.tableContainer, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+            {/* Table Header */}
+            <View style={[styles.tableHeader, { borderBottomColor: colors.cardBorder }]}>
+              <Text style={[styles.tableHeadText, styles.colInvoice, { color: colors.textMuted }]}>{t('Invoice')}</Text>
+              <Text style={[styles.tableHeadText, styles.colCustomer, { color: colors.textMuted }]}>{t('Customer')}</Text>
+              <Text style={[styles.tableHeadText, styles.colAmount, { color: colors.textMuted }]}>{t('Amount')}</Text>
+              {!isCompact && (
+                <>
+                  <Text style={[styles.tableHeadText, styles.colIssued, { color: colors.textMuted }]}>{t('Issued')}</Text>
+                  <Text style={[styles.tableHeadText, styles.colDue, { color: colors.textMuted }]}>{t('Due')}</Text>
+                </>
+              )}
+              <Text style={[styles.tableHeadText, styles.colStatus, { color: colors.textMuted }]}>{t('Status')}</Text>
+            </View>
+
             {filteredOrders.map((order, index) => {
               const orderId = order.id ?? index;
-              const orderTotal =
-                typeof order.totalValue === 'number'
+              const bill = order.id != null ? bills.get(String(order.id)) : undefined;
+              const displayAmount = bill
+                ? bill.amount
+                : typeof order.totalValue === 'number'
                   ? order.totalValue
                   : typeof order.total === 'number'
                     ? order.total
                     : 0;
               const orderCustomer = order.customer ?? t('Unknown customer');
+              const statusKey = (order.status ?? 'Pending').toLowerCase();
+              const isOverdue = statusKey === 'overdue';
+              const isLast = index === filteredOrders.length - 1;
               return (
-                <Card
+                <Pressable
                   key={orderId}
-                  mode="outlined"
-                  style={[styles.orderCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
+                  onPress={() => openDetails(order, 'view')}
+                  style={(state: any) => [
+                    styles.tableRow,
+                    !isLast && { borderBottomColor: colors.cardBorder, borderBottomWidth: 1 },
+                    isLast && styles.tableRowLast,
+                    isOverdue && styles.tableRowOverdue,
+                    state.hovered && { backgroundColor: 'rgba(255,255,255,0.02)' },
+                  ]}
                 >
-                  <Card.Content style={styles.orderCardContent}>
-                    <View style={[styles.orderHeader, isCompact && styles.orderHeaderCompact]}>
-                      <View style={styles.orderInfo}>
-                        <Text style={[styles.orderLabel, { color: colors.textSecondary }]}>{t('Order')}</Text>
-                        <Text style={[styles.orderId, { color: colors.textPrimary }]}>#{orderId}</Text>
-                        <Text style={[styles.orderCustomer, { color: colors.textMuted }]}>{orderCustomer}</Text>
-                      </View>
-                      <Chip
-                        compact={isCompact}
+                  <Text style={[styles.cellInvoice, styles.colInvoice, { color: colors.primaryPurple }]} numberOfLines={1}>
+                    #{orderId}
+                  </Text>
+                  <Text style={[styles.cellCustomer, styles.colCustomer, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {orderCustomer}
+                  </Text>
+                  <Text style={[styles.cellAmount, styles.colAmount, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {formatCurrency(displayAmount, currency)}
+                  </Text>
+                  {!isCompact && (
+                    <>
+                      <Text
+                        style={[styles.cellIssued, styles.colIssued, { color: colors.textMuted }]}
+                        numberOfLines={1}
+                      >
+                        {formatUsDate(bill?.issueDate ?? order.createdAt ?? order.date ?? null)}
+                      </Text>
+                      <Text
                         style={[
-                          styles.statusBadge,
-                          isCompact && styles.statusBadgeCompact,
-                          { backgroundColor: `${getOrderStatusColor(order.status ?? 'Pending', colors)}20` },
+                          styles.cellDue,
+                          styles.colDue,
+                          { color: isOverdue ? colors.destructive : colors.textMuted },
                         ]}
-                        textStyle={[
-                          styles.statusText,
-                          isCompact && styles.statusTextCompact,
-                          { color: getOrderStatusColor(order.status ?? 'Pending', colors) },
-                        ]}
+                        numberOfLines={1}
                       >
-                          {t(order.status ?? 'Pending')}
-                        </Chip>
-                    </View>
-
-                    <View style={styles.orderMeta}>
-                      <View style={styles.metaItem}>
-                        <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{t('Date')}</Text>
-                        <Text style={[styles.metaValue, { color: colors.textPrimary }]}>
-                          {formatUsDateTime(order.createdAt ?? order.date ?? null)}
-                        </Text>
-                      </View>
-                      <View style={styles.metaItem}>
-                        <Text style={[styles.metaLabel, { color: colors.textMuted }]}>{t('Total')}</Text>
-                        <Text style={[styles.metaValue, { color: colors.neonGreen }]}>
-                          {formatCurrency(orderTotal, currency)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={[styles.cardActions, isCompact && styles.cardActionsCompact]}>
-                      <Button
-                        mode="outlined"
-                        onPress={() => openDetails(order, 'view')}
-                        textColor={colors.textSecondary}
-                        testID={`bill-view-${order.id}`}
-                        style={[styles.actionButton, { borderColor: colors.cardBorder }]}
-                      >
-                        {t('View')}
-                      </Button>
-                      <Button
-                        mode="contained"
-                        onPress={() => openDetails(order, 'generate')}
-                        buttonColor={colors.primaryPurple}
-                        textColor={colors.neonGreen}
-                        testID={`bill-generate-${order.id}`}
-                        style={styles.actionButton}
-                      >
-                        {t('Generate')}
-                      </Button>
-                    </View>
-                  </Card.Content>
-                </Card>
+                        {formatUsDate(bill?.dueDate ?? order.payday ?? order.paymentScheduledDate ?? null)}
+                      </Text>
+                    </>
+                  )}
+                  <View style={styles.colStatus}>
+                    <StatusBadge status={statusKey} label={t(order.status ?? 'Pending')} />
+                  </View>
+                </Pressable>
               );
             })}
           </View>
@@ -357,7 +428,7 @@ export function Bills() {
             ]}
           >
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.neonGreen }]}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
                 {detailsMode === 'generate' ? t('Generate Bill') : t('Bill Details')}
               </Text>
               <IconButton
@@ -379,65 +450,110 @@ export function Bills() {
             ) : detailsBill ? (
               <ScrollView style={styles.detailsScroll} contentContainerStyle={styles.detailsContent}>
                 <View style={[styles.detailsCard, { borderColor: colors.cardBorder }]}>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      #{detailsOrder?.id ?? '--'}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                      <Feather name="file-text" size={14} color={colors.primaryPurple} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Order')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.primaryPurple }]}>
+                        #{detailsOrder?.id ?? '--'}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Amount')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.neonGreen }]}>
-                      {formatCurrency(detailsBill.amount, currency)}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.neonGreen}14` }]}>
+                      <Feather name="dollar-sign" size={14} color={colors.neonGreen} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Amount')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.neonGreen, fontSize: 16, fontWeight: '700' }]}>
+                        {formatCurrency(detailsBill.amount, currency)}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Due Date')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {formatUsDateTime(detailsBill.dueDate ?? null)}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.accentOrange}14` }]}>
+                      <Feather name="calendar" size={14} color={colors.accentOrange} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Due Date')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {formatUsDateTime(detailsBill.dueDate ?? null)}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Issue Date')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {formatUsDateTime(detailsBill.issueDate ?? null)}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.textMuted}14` }]}>
+                      <Feather name="clock" size={14} color={colors.textMuted} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Issue Date')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {formatUsDateTime(detailsBill.issueDate ?? null)}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
                 <View style={[styles.detailsCard, { borderColor: colors.cardBorder }]}>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Digitable Line')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsBill.digitableLine || '--'}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.textMuted}14` }]}>
+                      <Feather name="type" size={14} color={colors.textMuted} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Digitable Line')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]} selectable>
+                        {detailsBill.digitableLine || '--'}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Barcode')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsBill.barCode || '--'}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.textMuted}14` }]}>
+                      <Feather name="bar-chart-2" size={14} color={colors.textMuted} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Barcode')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]} selectable>
+                        {detailsBill.barCode || '--'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
                 <View style={[styles.detailsCard, { borderColor: colors.cardBorder }]}>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Bank')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsBill.bankCode}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.primaryPurple}14` }]}>
+                      <Feather name="home" size={14} color={colors.primaryPurple} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Bank')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {detailsBill.bankCode}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Our Number')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsBill.ourNumber}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.textMuted}14` }]}>
+                      <Feather name="hash" size={14} color={colors.textMuted} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Our Number')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {detailsBill.ourNumber}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.detailsRow}>
-                    <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Document')}</Text>
-                    <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
-                      {detailsBill.documentNumber}
-                    </Text>
+                  <View style={styles.detailsIconRow}>
+                    <View style={[styles.detailsIconBox, { backgroundColor: `${colors.textMuted}14` }]}>
+                      <Feather name="file" size={14} color={colors.textMuted} />
+                    </View>
+                    <View style={styles.detailsIconRowInfo}>
+                      <Text style={[styles.detailsLabel, { color: colors.textMuted }]}>{t('Document')}</Text>
+                      <Text style={[styles.detailsValue, { color: colors.textPrimary }]}>
+                        {detailsBill.documentNumber}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
@@ -446,7 +562,7 @@ export function Bills() {
                     mode="contained"
                     onPress={openPdf}
                     buttonColor={colors.primaryPurple}
-                    textColor={colors.neonGreen}
+                    textColor="#fff"
                     testID="bill-view-pdf"
                     style={styles.actionButton}
                     contentStyle={styles.modalButtonContent}
@@ -465,7 +581,13 @@ export function Bills() {
                     ) : pdfError ? (
                       <Text style={[styles.htmlText, { color: colors.accentOrange }]}>{pdfError}</Text>
                     ) : pdfDataUri ? (
-                      Platform.OS === 'web' ? (
+                      Platform.OS !== 'web' && WebView ? (
+                        <WebView
+                          originWhitelist={['*']}
+                          source={{ uri: pdfDataUri }}
+                          style={styles.pdfViewer}
+                        />
+                      ) : (
                         <View style={styles.pdfWebFallback}>
                           <Text style={[styles.htmlText, { color: colors.textSecondary }]}>
                             {t('PDF preview opens in a new tab on web.')}
@@ -481,12 +603,6 @@ export function Bills() {
                             {t('Open PDF')}
                           </Button>
                         </View>
-                      ) : (
-                      <WebView
-                        originWhitelist={['*']}
-                        source={{ uri: pdfDataUri }}
-                        style={styles.pdfViewer}
-                      />
                       )
                     ) : (
                       <Text style={[styles.htmlText, { color: colors.textSecondary }]}>
@@ -516,37 +632,78 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  headerBtn: {
+    borderRadius: 8,
+  },
+  headerBtnOutlined: {
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerBtnContent: {
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 24,
+  },
+  summaryRowCompact: {
+    flexDirection: 'column',
+    gap: 10,
+  },
+  summaryCard: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+  },
+  summaryLabel: {
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  summaryValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
   title: {
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0.4,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.3,
     marginBottom: 6,
-    lineHeight: 36,
+    lineHeight: 30,
   },
   titleCompact: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-    lineHeight: 30,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    lineHeight: 26,
   },
   subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 10,
+    fontSize: 13,
+    lineHeight: 18,
   },
   subtitleCompact: {
     fontSize: 13,
     lineHeight: 18,
   },
-  headerLine: {
-    height: 6,
-    width: 132,
-    borderRadius: 999,
-  },
   banner: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -555,7 +712,7 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     gap: 8,
@@ -581,7 +738,7 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     minHeight: 50,
   },
   searchInput: {
@@ -589,7 +746,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   refreshButton: {
-    borderRadius: 14,
+    borderRadius: 12,
     minHeight: 50,
   },
   refreshButtonCompact: {
@@ -634,85 +791,81 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  orderList: {
-    gap: 16,
+  tableContainer: {
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
-  orderCard: {
-    borderRadius: 10,
-  },
-  orderCardContent: {
-    padding: 16,
-    gap: 12,
-  },
-  orderHeader: {
+  tableHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
   },
-  orderHeaderCompact: {
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-  },
-  orderInfo: {
-    gap: 4,
-  },
-  orderLabel: {
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  orderId: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  orderCustomer: {
-    fontSize: 12,
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 999,
-    minHeight: 24,
-    justifyContent: 'center',
-  },
-  statusBadgeCompact: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    minHeight: 22,
-  },
-  statusText: {
+  tableHeadText: {
     fontSize: 11,
     fontWeight: '600',
-  },
-  statusTextCompact: {
-    fontSize: 10,
-  },
-  orderMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  metaItem: {
-    gap: 4,
-  },
-  metaLabel: {
-    fontSize: 10,
+    letterSpacing: 1,
     textTransform: 'uppercase',
-    letterSpacing: 0.4,
   },
-  metaValue: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  cardActions: {
+  tableRow: {
     flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    ...Platform.select({ web: { transition: 'background-color 0.15s ease', cursor: 'pointer' } as any, default: {} }),
   },
-  cardActionsCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
+  tableRowLast: {
+    borderBottomWidth: 0,
+  },
+  tableRowOverdue: {
+    backgroundColor: 'rgba(255, 77, 125, 0.03)',
+  },
+  colInvoice: {
+    flex: 1,
+    minWidth: 70,
+  },
+  colCustomer: {
+    flex: 1.5,
+    minWidth: 80,
+  },
+  colAmount: {
+    width: 90,
+    textAlign: 'right' as const,
+  },
+  colIssued: {
+    width: 90,
+  },
+  colDue: {
+    width: 90,
+  },
+  colStatus: {
+    width: 100,
+  },
+  cellInvoice: {
+    fontSize: 12,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+  },
+  cellCustomer: {
+    fontSize: 14,
+  },
+  cellAmount: {
+    fontSize: 14,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+    textAlign: 'right',
+  },
+  cellIssued: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  cellDue: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
   },
   actionButton: {
     borderRadius: 8,
@@ -768,7 +921,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
-    gap: 8,
+    gap: 12,
+  },
+  detailsIconRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  detailsIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  detailsIconRowInfo: {
+    flex: 1,
+    gap: 2,
   },
   detailsRow: {
     flexDirection: 'row',
@@ -782,8 +952,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   detailsValue: {
-    flex: 1,
-    textAlign: 'right',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -806,7 +974,7 @@ const styles = StyleSheet.create({
   },
   pdfBox: {
     borderWidth: 1.5,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 8,
     height: 360,
   },

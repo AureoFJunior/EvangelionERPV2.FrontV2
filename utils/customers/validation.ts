@@ -20,10 +20,10 @@ export type CustomerFormErrors = {
   email: string | null;
   phone: string | null;
   document: string | null;
+  street: string | null;
   city: string | null;
   state: string | null;
   postalCode: string | null;
-  required: string | null;
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -61,7 +61,7 @@ export const normalizeCustomerStatus = (
 export const getNameError = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) {
-    return null;
+    return 'Name is required';
   }
   return trimmed.length < 2 ? 'Name is too short' : null;
 };
@@ -69,17 +69,27 @@ export const getNameError = (value: string) => {
 export const getEmailError = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) {
-    return null;
+    return 'Email is required';
   }
   return emailPattern.test(trimmed) ? null : 'Enter a valid email address';
+};
+
+export const formatPhone = (value: string) => {
+  const digits = normalizeDigits(value).slice(0, 11);
+  if (!digits) return '';
+  if (digits.length <= 2) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10)
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 };
 
 export const getPhoneError = (value: string) => {
   const digits = normalizeDigits(value);
   if (!digits) {
-    return null;
+    return 'Phone number is required';
   }
-  return digits.length < 10 || digits.length > 15 ? 'Enter a valid phone number' : null;
+  return digits.length < 10 || digits.length > 11 ? 'Enter a valid phone number' : null;
 };
 
 const isRepeatedDigits = (digits: string) => digits.split('').every((digit) => digit === digits[0]);
@@ -182,6 +192,11 @@ export const getStateError = (value: string) => {
   return /^[A-Za-z]{2}$/.test(trimmed) ? null : 'Use a 2-letter state code';
 };
 
+export const getStreetError = (value: string) => {
+  if (!value.trim()) return 'Street is required';
+  return null;
+};
+
 export const getPostalCodeError = (value: string) => {
   const digits = normalizeDigits(value);
   if (!digits) {
@@ -191,19 +206,15 @@ export const getPostalCodeError = (value: string) => {
 };
 
 export const getCustomerFormErrors = (values: CustomerFormValues): CustomerFormErrors => {
-  const required = !values.name.trim() && !values.email.trim()
-    ? 'Name or email is required.'
-    : null;
-
   return {
     name: getNameError(values.name),
     email: getEmailError(values.email),
     phone: getPhoneError(values.phone),
     document: getDocumentError(values.document),
+    street: getStreetError(values.street),
     city: getCityError(values.city),
     state: getStateError(values.state),
     postalCode: getPostalCodeError(values.postalCode),
-    required,
   };
 };
 
@@ -213,10 +224,10 @@ export const hasCustomerFormErrors = (errors: CustomerFormErrors) =>
       errors.email ||
       errors.phone ||
       errors.document ||
+      errors.street ||
       errors.city ||
       errors.state ||
-      errors.postalCode ||
-      errors.required,
+      errors.postalCode,
   );
 
 export const emptyCustomerFormValues = (): CustomerFormValues => ({

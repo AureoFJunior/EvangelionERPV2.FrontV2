@@ -3,7 +3,6 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 're
 import { Feather } from '@expo/vector-icons';
 import {
   Button,
-  Card,
   Chip,
   HelperText,
   IconButton,
@@ -19,6 +18,7 @@ import {
   VictoryScatter,
   VictoryTheme,
 } from 'victory-native';
+import { SegmentedControl } from './SegmentedControl';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
@@ -74,7 +74,7 @@ export function Forecast() {
   const erpService = useMemo(() => new ErpService(client), [client]);
 
   const [horizon, setHorizon] = useState<ForecastHorizon>(30);
-  const [balanceInput, setBalanceInput] = useState('0');
+  const [balanceInput, setBalanceInput] = useState('');
   const [forecast, setForecast] = useState<CashFlowForecast | null>(null);
   const [loadingForecast, setLoadingForecast] = useState(false);
   const [forecastError, setForecastError] = useState<string | null>(null);
@@ -87,8 +87,9 @@ export function Forecast() {
   const [scenariosVisible, setScenariosVisible] = useState(false);
 
   const runForecast = async () => {
-    const currentBalance = parseNumericInput(balanceInput);
-    if (currentBalance === null) {
+    const trimmed = balanceInput.trim();
+    const currentBalance = trimmed ? parseNumericInput(trimmed) : null;
+    if (trimmed && currentBalance === null) {
       setForecastError(t('Current balance is invalid.'));
       return;
     }
@@ -96,17 +97,23 @@ export function Forecast() {
     setLoadingForecast(true);
     setForecastError(null);
 
-    const response = await erpService.getCashFlowForecast(horizon, currentBalance);
-    if (response.ok && response.data) {
-      setForecast(response.data);
-      setProjectionPage(1);
-    } else {
-      setForecastError(response.error ?? t('Unable to load cash flow forecast.'));
+    try {
+      const response = await erpService.getCashFlowForecast(horizon, currentBalance);
+      if (response.ok && response.data) {
+        setForecast(response.data);
+        setProjectionPage(1);
+      } else {
+        setForecastError(response.error ?? t('Unable to load cash flow forecast.'));
+        setForecast(null);
+        setProjectionPage(1);
+      }
+    } catch {
+      setForecastError(t('Unable to load cash flow forecast.'));
       setForecast(null);
       setProjectionPage(1);
+    } finally {
+      setLoadingForecast(false);
     }
-
-    setLoadingForecast(false);
   };
 
   const updateScenario = (index: number, updates: Partial<ScenarioFormState>) => {
@@ -196,13 +203,16 @@ export function Forecast() {
   };
 
   const simulationPreview = useMemo<ScenarioValidationPreview>(() => {
-    const currentBalance = parseNumericInput(balanceInput);
-    if (currentBalance === null) {
-      return {
-        sanitized: [],
-        fieldErrors: {},
-        firstError: t('Current balance is invalid.'),
-      };
+    const trimmed = balanceInput.trim();
+    if (trimmed) {
+      const parsed = parseNumericInput(trimmed);
+      if (parsed === null) {
+        return {
+          sanitized: [],
+          fieldErrors: {},
+          firstError: t('Current balance is invalid.'),
+        };
+      }
     }
 
     const mapped: ForecastSimulationScenario[] = [];
@@ -252,8 +262,9 @@ export function Forecast() {
   const canRunSimulation = !runningSimulation && isAuthenticated && !authLoading && !simulationPreview.firstError;
 
   const runSimulation = async () => {
-    const currentBalance = parseNumericInput(balanceInput);
-    if (currentBalance === null) {
+    const trimmed = balanceInput.trim();
+    const currentBalance = trimmed ? parseNumericInput(trimmed) : null;
+    if (trimmed && currentBalance === null) {
       setSimulationError(t('Current balance is invalid.'));
       return;
     }
@@ -266,21 +277,26 @@ export function Forecast() {
     setRunningSimulation(true);
     setSimulationError(null);
 
-    const response = await erpService.runCashFlowSimulation({
-      horizonInDays: horizon,
-      currentBalance,
-      scenarios: simulationPreview.sanitized,
-    });
+    try {
+      const response = await erpService.runCashFlowSimulation({
+        horizonInDays: horizon,
+        currentBalance: currentBalance ?? 0,
+        scenarios: simulationPreview.sanitized,
+      });
 
-    if (response.ok && response.data) {
-      setSimulationResults(response.data);
-      setScenariosVisible(false);
-    } else {
-      setSimulationError(response.error ?? t('Unable to run simulation.'));
+      if (response.ok && response.data) {
+        setSimulationResults(response.data);
+        setScenariosVisible(false);
+      } else {
+        setSimulationError(response.error ?? t('Unable to run simulation.'));
+        setSimulationResults([]);
+      }
+    } catch {
+      setSimulationError(t('Unable to run simulation.'));
       setSimulationResults([]);
+    } finally {
+      setRunningSimulation(false);
     }
-
-    setRunningSimulation(false);
   };
 
   const riskDays = countRiskDays(forecast);
@@ -296,7 +312,7 @@ export function Forecast() {
       rows.push(pagedProjection.slice(i, i + 2));
     }
     return rows;
-  }, [pagedProjection]);
+  }, [projection, currentProjectionPage]);
 
   const chartWidth = Math.min(Math.max(width - contentPadding * 2 - 28, 280), isTablet ? 720 : 460);
   const cashFlowSeries = useMemo(
@@ -326,14 +342,21 @@ export function Forecast() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.content, { padding: contentPadding }]}>
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-              {t('CASHFLOW FORECAST')}
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}>
-              {t('Project receivables, payables and balance risk days')}
-            </Text>
-            <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
+          <View style={[styles.header, !isCompact && styles.headerRow]}>
+            <View>
+              <Text style={[styles.title, { color: colors.textPrimary }, isCompact && styles.titleCompact]}>
+                {t('Forecast')}
+              </Text>
+              <Text style={[styles.subtitle, { color: colors.textMuted }, isCompact && styles.subtitleCompact]}>
+                {t('Predictive revenue outlook and trend analysis')}
+              </Text>
+            </View>
+            <SegmentedControl
+              options={horizonOptions.map(String)}
+              selected={String(horizon)}
+              onSelect={(value) => setHorizon(Number(value) as ForecastHorizon)}
+              labelFn={(value) => t('{value} days', { value })}
+            />
           </View>
 
           {!isAuthenticated && !authLoading && (
@@ -344,8 +367,27 @@ export function Forecast() {
             </View>
           )}
 
-          <Card mode="outlined" style={[styles.configCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-            <Card.Content style={styles.configCardContent}>
+          {/* Trend Cards */}
+          <View style={[styles.trendGrid, isCompact && styles.trendGridCompact]}>
+            {[
+              { label: t('Final Projection'), value: forecast ? formatCurrency(forecast.finalProjectedBalance ?? 0, currency) : '--', change: forecast ? `${countRiskDays(forecast)} ${t('Risk Days')}` : '--', positive: (forecast?.finalProjectedBalance ?? 0) >= 0, icon: 'trending-up' as const, accent: colors.primaryPurple },
+              { label: t('Growth Rate'), value: forecast && forecast.currentBalance !== 0 ? `${(((forecast.finalProjectedBalance - forecast.currentBalance) / Math.abs(forecast.currentBalance)) * 100).toFixed(1)}%` : forecast ? '0.0%' : '--', change: forecast ? (forecast.finalProjectedBalance >= forecast.currentBalance ? t('Growing') : t('Declining')) : '--', positive: forecast ? forecast.finalProjectedBalance >= forecast.currentBalance : true, icon: 'bar-chart-2' as const, accent: colors.neonGreen },
+              { label: t('Horizon'), value: `${horizon}d`, change: t('Current Balance'), positive: true, icon: 'calendar' as const, accent: colors.secondaryPurple },
+              { label: t('Risk Factors'), value: String(scenarios.length), change: simulationResults.length > 0 ? t('Results ready') : t('Low impact'), positive: true, icon: 'alert-triangle' as const, accent: colors.accentOrange },
+            ].map(({ label, value, change, positive, icon, accent }) => (
+              <View key={label} style={[styles.trendCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+                <View style={[styles.trendIconBox, { backgroundColor: `${accent}18` }]}>
+                  <Feather name={icon} size={14} color={accent} />
+                </View>
+                <Text style={[styles.trendLabel, { color: colors.textMuted }]}>{label}</Text>
+                <Text style={[styles.trendValue, { color: colors.textPrimary }]}>{value}</Text>
+                <Text style={[styles.trendChange, { color: positive ? colors.neonGreen : colors.destructive }]}>{change}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={[styles.configCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+            <View style={styles.configCardContent}>
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Forecast Configuration')}</Text>
 
               <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>{t('Horizon')}</Text>
@@ -383,6 +425,7 @@ export function Forecast() {
               <TextInput
                 mode="outlined"
                 label={t('Current Balance')}
+                placeholder={t('Leave empty to use enterprise balance')}
                 value={balanceInput}
                 onChangeText={setBalanceInput}
                 keyboardType="numeric"
@@ -395,7 +438,7 @@ export function Forecast() {
                 loading={loadingForecast}
                 disabled={loadingForecast || !isAuthenticated || authLoading}
                 buttonColor={colors.primaryPurple}
-                textColor={colors.neonGreen}
+                textColor="#fff"
                 icon={({ size }) => <Feather name="activity" size={size} color={colors.neonGreen} />}
                 style={styles.forecastButton}
               >
@@ -404,95 +447,95 @@ export function Forecast() {
               <HelperText type="error" visible={Boolean(forecastError)}>
                 {forecastError}
               </HelperText>
-            </Card.Content>
-          </Card>
+            </View>
+          </View>
 
           {forecast && (
             <>
               <View style={[styles.statsRow, isCompact && styles.statsRowCompact]}>
-                <Card mode="outlined" style={[styles.statCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-                  <Card.Content>
+                <View style={[styles.statCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+                  <View>
                     <Text style={[styles.statLabel, { color: colors.textMuted }]}>{t('Current Balance')}</Text>
                     <Text style={[styles.statValue, { color: colors.textPrimary }]}>
                       {formatCurrency(forecast.currentBalance, currency)}
                     </Text>
-                  </Card.Content>
-                </Card>
-                <Card mode="outlined" style={[styles.statCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-                  <Card.Content>
+                  </View>
+                </View>
+                <View style={[styles.statCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+                  <View>
                     <Text style={[styles.statLabel, { color: colors.textMuted }]}>{t('Final Projection')}</Text>
                     <Text style={[styles.statValue, { color: finalBalance < 0 ? colors.accentOrange : colors.neonGreen }]}>
                       {formatCurrency(finalBalance, currency)}
                     </Text>
-                  </Card.Content>
-                </Card>
-                <Card mode="outlined" style={[styles.statCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-                  <Card.Content>
+                  </View>
+                </View>
+                <View style={[styles.statCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+                  <View>
                     <Text style={[styles.statLabel, { color: colors.textMuted }]}>{t('Risk Days')}</Text>
                     <Text style={[styles.statValue, { color: riskDays > 0 ? colors.accentOrange : colors.neonGreen }]}>
                       {riskDays}
                     </Text>
-                  </Card.Content>
-                </Card>
+                  </View>
+                </View>
               </View>
 
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Cash Flow Graph')}</Text>
-              <Card mode="outlined" style={[styles.chartCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-                <Card.Content style={styles.chartContent}>
+              <View style={[styles.chartCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+                <View style={styles.chartContent}>
+                  <View style={styles.chartHeader}>
+                    <View>
+                      <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>{t('Revenue Forecast')}</Text>
+                      <Text style={[styles.chartSubtitle, { color: colors.textMuted }]}>{t('Actual + projected 6-month outlook')}</Text>
+                    </View>
+                    <View style={[styles.chartLegend, isCompact && styles.chartLegendCompact]}>
+                      <View style={styles.legendItem}>
+                        <View style={[styles.legendLine, { backgroundColor: colors.primaryPurple }]} />
+                        <Text style={[styles.legendText, { color: colors.textMuted }]}>{t('Actual')}</Text>
+                      </View>
+                      <View style={styles.legendItem}>
+                        <View style={[styles.legendLineDashed, { borderBottomColor: colors.neonGreen }]} />
+                        <Text style={[styles.legendText, { color: colors.textMuted }]}>{t('Forecast')}</Text>
+                      </View>
+                    </View>
+                  </View>
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.chartScrollContent}
                   >
-                    <VictoryChart width={chartWidth} height={250} theme={VictoryTheme.material}>
+                    <VictoryChart width={chartWidth} height={240} theme={VictoryTheme.material}>
                       <VictoryAxis
                         tickCount={Math.min(8, Math.max(4, Math.ceil(cashFlowSeries.length / 6)))}
                         style={{
-                          axis: { stroke: colors.cardBorder },
-                          tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                          grid: { stroke: `${colors.cardBorder}35` },
+                          axis: { stroke: 'transparent' },
+                          tickLabels: { fill: colors.textMuted, fontSize: 11 },
+                          grid: { stroke: colors.cardBorder },
                         }}
                       />
                       <VictoryAxis
                         dependentAxis
                         style={{
-                          axis: { stroke: colors.cardBorder },
-                          tickLabels: { fill: colors.textSecondary, fontSize: 10 },
-                          grid: { stroke: `${colors.cardBorder}35` },
+                          axis: { stroke: 'transparent' },
+                          tickLabels: { fill: colors.textMuted, fontSize: 11 },
+                          grid: { stroke: 'transparent' },
                         }}
                       />
-                      <VictoryLine data={cashFlowSeries} x="x" y="balance" style={{ data: { stroke: colors.neonGreen, strokeWidth: 2.8 } }} />
+                      <VictoryLine data={cashFlowSeries} x="x" y="balance" style={{ data: { stroke: colors.primaryPurple, strokeWidth: 2 } }} />
                       <VictoryLine
                         data={cashFlowSeries}
                         x="x"
                         y="receivable"
-                        style={{ data: { stroke: colors.primaryPurple, strokeWidth: 2, strokeDasharray: '5,4' } }}
+                        style={{ data: { stroke: colors.neonGreen, strokeWidth: 2, strokeDasharray: '5,5' } }}
                       />
                       <VictoryLine
                         data={cashFlowSeries}
                         x="x"
                         y="payable"
-                        style={{ data: { stroke: colors.accentOrange, strokeWidth: 2, strokeDasharray: '5,4' } }}
+                        style={{ data: { stroke: colors.accentOrange, strokeWidth: 2, strokeDasharray: '5,5' } }}
                       />
-                      <VictoryScatter data={cashFlowSeries} x="x" y="balance" size={2} style={{ data: { fill: colors.neonGreen } }} />
                     </VictoryChart>
                   </ScrollView>
-                  <View style={[styles.chartLegend, isCompact && styles.chartLegendCompact]}>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: colors.neonGreen }]} />
-                      <Text style={[styles.legendText, { color: colors.textSecondary }]}>{t('Bal')}</Text>
-                    </View>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: colors.primaryPurple }]} />
-                      <Text style={[styles.legendText, { color: colors.textSecondary }]}>{t('Rec')}</Text>
-                    </View>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: colors.accentOrange }]} />
-                      <Text style={[styles.legendText, { color: colors.textSecondary }]}>{t('Pay')}</Text>
-                    </View>
-                  </View>
-                </Card.Content>
-              </Card>
+                </View>
+              </View>
 
               <View style={[styles.projectionHeader, isCompact && styles.projectionHeaderCompact]}>
                 <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Daily Projection')}</Text>
@@ -525,8 +568,8 @@ export function Forecast() {
                 </View>
               </View>
 
-              <Card mode="outlined" style={[styles.projectionCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-                <Card.Content style={styles.projectionContent}>
+              <View style={[styles.projectionCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+                <View style={styles.projectionContent}>
                   {projectionRows.length > 0 ? (
                     projectionRows.map((row, rowIndex) => (
                       <View key={`projection-row-${rowIndex}`} style={styles.dayRowPair}>
@@ -572,14 +615,14 @@ export function Forecast() {
                       {t('No projection data available.')}
                     </Text>
                   )}
-                </Card.Content>
-              </Card>
+                </View>
+              </View>
             </>
           )}
 
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Simulation Scenarios')}</Text>
-          <Card mode="outlined" style={[styles.configCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
-            <Card.Content style={styles.scenarioSummaryContent}>
+          <View style={[styles.configCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}>
+            <View style={styles.scenarioSummaryContent}>
               <Text style={[styles.scenarioSummaryText, { color: colors.textSecondary }]}>
                 {t('{count} scenarios configured', { count: scenarios.length })}
               </Text>
@@ -606,33 +649,50 @@ export function Forecast() {
               <HelperText type="error" visible={Boolean(simulationError)}>
                 {simulationError}
               </HelperText>
-            </Card.Content>
-          </Card>
+            </View>
+          </View>
 
           {simulationResults.length > 0 && (
             <>
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('Simulation Results')}</Text>
               <View style={styles.resultList}>
-                {simulationResults.map((result) => (
-                  <Card
-                    key={result.scenarioName}
-                    mode="outlined"
-                    style={[styles.resultCard, { borderColor: colors.cardBorder, backgroundColor: colors.cardBgFrom }]}
-                  >
-                    <Card.Content style={styles.resultCardContent}>
-                      <Text style={[styles.resultTitle, { color: colors.textPrimary }]}>{result.scenarioName}</Text>
-                      <Text style={[styles.resultMeta, { color: colors.textSecondary }]}>
-                        {t('Final')}: {formatCurrency(result.finalProjectedBalance, currency)}
-                      </Text>
-                      <Text style={[styles.resultMeta, { color: result.impact < 0 ? colors.accentOrange : colors.neonGreen }]}>
-                        {t('Impact')}: {formatCurrency(result.impact, currency)}
-                      </Text>
-                      <Text style={[styles.resultMeta, { color: colors.textSecondary }]}>
-                        {t('Risk Days')}: {result.riskDays.length}
-                      </Text>
-                    </Card.Content>
-                  </Card>
-                ))}
+                {simulationResults.map((result) => {
+                  const isNegativeImpact = result.impact < 0;
+                  const hasRisk = result.riskDays.length > 0;
+                  return (
+                    <View
+                      key={result.scenarioName}
+                      style={[styles.resultCard, { borderColor: isNegativeImpact ? `${colors.accentOrange}40` : colors.cardBorder, backgroundColor: colors.cardBgFrom }]}
+                    >
+                      <View style={styles.resultCardHeader}>
+                        <View style={[styles.resultIconBox, { backgroundColor: isNegativeImpact ? `${colors.accentOrange}14` : `${colors.neonGreen}14` }]}>
+                          <Feather name={isNegativeImpact ? 'alert-triangle' : 'check-circle'} size={14} color={isNegativeImpact ? colors.accentOrange : colors.neonGreen} />
+                        </View>
+                        <Text style={[styles.resultTitle, { color: colors.textPrimary }]}>{result.scenarioName}</Text>
+                      </View>
+                      <View style={styles.resultMetrics}>
+                        <View style={styles.resultMetric}>
+                          <Text style={[styles.resultMetricLabel, { color: colors.textMuted }]}>{t('Final')}</Text>
+                          <Text style={[styles.resultMetricValue, { color: colors.textPrimary }]}>
+                            {formatCurrency(result.finalProjectedBalance, currency)}
+                          </Text>
+                        </View>
+                        <View style={styles.resultMetric}>
+                          <Text style={[styles.resultMetricLabel, { color: colors.textMuted }]}>{t('Impact')}</Text>
+                          <Text style={[styles.resultMetricValue, { color: isNegativeImpact ? colors.accentOrange : colors.neonGreen }]}>
+                            {formatCurrency(result.impact, currency)}
+                          </Text>
+                        </View>
+                        <View style={styles.resultMetric}>
+                          <Text style={[styles.resultMetricLabel, { color: colors.textMuted }]}>{t('Risk Days')}</Text>
+                          <Text style={[styles.resultMetricValue, { color: hasRisk ? colors.accentOrange : colors.textPrimary }]}>
+                            {result.riskDays.length}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
               </View>
             </>
           )}
@@ -809,7 +869,7 @@ export function Forecast() {
                 loading={runningSimulation}
                 disabled={!canRunSimulation}
                 buttonColor={colors.primaryPurple}
-                textColor={colors.neonGreen}
+                textColor="#fff"
                 icon={({ size }) => <Feather name="play" size={size} color={colors.neonGreen} />}
                 style={styles.actionButton}
               >
@@ -842,37 +902,74 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    marginBottom: 6,
-    lineHeight: 36,
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
-  titleCompact: {
+  title: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.2,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginBottom: 4,
     lineHeight: 30,
   },
+  titleCompact: {
+    fontSize: 20,
+  },
   subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 10,
+    fontSize: 13,
+    lineHeight: 18,
   },
   subtitleCompact: {
     fontSize: 13,
     lineHeight: 18,
   },
-  headerLine: {
-    height: 4,
-    width: 140,
-    borderRadius: 2,
+  trendGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 24,
+  },
+  trendGridCompact: {
+    flexDirection: 'column',
+  },
+  trendCard: {
+    flex: 1,
+    minWidth: 140,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+  },
+  trendIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  trendLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  trendValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    fontVariant: ['tabular-nums'],
+    marginTop: 4,
+  },
+  trendChange: {
+    fontSize: 11,
+    marginTop: 4,
   },
   banner: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -880,15 +977,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   configCard: {
-    borderRadius: 10,
+    borderRadius: 12,
+    borderWidth: 1,
     marginBottom: 16,
+    padding: 16,
   },
   configCardContent: {
-    gap: 8,
+    gap: 10,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
     marginBottom: 10,
   },
   inputLabel: {
@@ -929,24 +1028,46 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    minWidth: 170,
-    borderRadius: 10,
+    minWidth: 140,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   statValue: {
     fontSize: 18,
     fontWeight: '700',
+    fontFamily: 'monospace',
+    fontVariant: ['tabular-nums'],
     marginTop: 4,
   },
   chartCard: {
-    borderRadius: 10,
-    marginBottom: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
   },
   chartContent: {
-    alignItems: 'center',
-    gap: 8,
+    gap: 4,
+    padding: 4,
+  },
+  chartHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+    gap: 12,
+  },
+  chartTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  chartSubtitle: {
+    fontSize: 11,
+    marginTop: 2,
   },
   chartScrollContent: {
     paddingHorizontal: 4,
@@ -955,25 +1076,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    marginTop: 4,
   },
   chartLegendCompact: {
     flexWrap: 'wrap',
-    justifyContent: 'center',
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  legendLine: {
+    width: 12,
+    height: 2,
+    borderRadius: 999,
+  },
+  legendLineDashed: {
+    width: 12,
+    height: 0,
+    borderBottomWidth: 2,
+    borderStyle: 'dashed',
   },
   legendText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
   },
   projectionHeader: {
     marginTop: 4,
@@ -1002,14 +1126,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   paginationButton: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
   },
   paginationButtonContent: {
     height: 36,
   },
   projectionCard: {
-    borderRadius: 10,
+    borderRadius: 12,
+    borderWidth: 1,
     marginBottom: 18,
   },
   projectionContent: {
@@ -1037,6 +1162,7 @@ const styles = StyleSheet.create({
   dayDate: {
     fontSize: 13,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   dayAmounts: {
     gap: 2,
@@ -1061,7 +1187,7 @@ const styles = StyleSheet.create({
   },
   modalHintCard: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 10,
     marginBottom: 10,
     gap: 4,
@@ -1088,7 +1214,7 @@ const styles = StyleSheet.create({
   },
   scenarioCard: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 10,
     gap: 8,
   },
@@ -1115,7 +1241,7 @@ const styles = StyleSheet.create({
   },
   inlineIconButton: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     margin: 0,
   },
   input: {
@@ -1153,17 +1279,46 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   resultCard: {
-    borderRadius: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 16,
+    gap: 12,
   },
-  resultCardContent: {
-    gap: 2,
+  resultCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  resultIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   resultTitle: {
     fontSize: 15,
     fontWeight: '700',
+    flex: 1,
   },
-  resultMeta: {
-    fontSize: 12,
+  resultMetrics: {
+    flexDirection: 'row',
+    gap: 0,
+  },
+  resultMetric: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  resultMetricLabel: {
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  resultMetricValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   modalCard: {
     width: '92%',

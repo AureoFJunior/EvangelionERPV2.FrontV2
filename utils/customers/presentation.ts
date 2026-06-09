@@ -1,6 +1,7 @@
 import { Customer as CustomerModel } from '../../services/erpService';
 import {
   CustomerFormValues,
+  formatPhone,
   formatPostalCode,
   normalizeCustomerStatus,
   normalizeStateCode,
@@ -101,10 +102,11 @@ export const toCustomerFormValues = (customer: CustomerModel): CustomerFormValue
     resolveText(customer.email) ??
     resolveCustomerText(customer, 'Email', 'emailAddress', 'EmailAddress') ??
     '';
-  const phone =
+  const rawPhone =
     resolveText(customer.phoneNumber) ??
     resolveCustomerText(customer, 'PhoneNumber', 'phone', 'Phone', 'mobile', 'Mobile') ??
     '';
+  const phone = formatPhone(rawPhone);
   const address =
     resolveText(customer.adress) ??
     resolveCustomerText(customer, 'Adress', 'Address', 'address', 'addressLine', 'AddressLine') ??

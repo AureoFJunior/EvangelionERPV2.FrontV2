@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Button, Card, Chip, Searchbar } from './ui/Paper';
+import { Button, Searchbar } from './ui/Paper';
+import { SegmentedControl } from './SegmentedControl';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
@@ -12,6 +13,7 @@ import { useOrderSummary } from '../hooks/customers/useOrderSummary';
 import { useCepLookup } from '../hooks/customers/useCepLookup';
 import { useCustomerForm } from '../hooks/customers/useCustomerForm';
 import { buildAddress } from '../utils/customers/address';
+import { normalizeDigits } from '../utils/customers/validation';
 import {
   CustomerFilterOption,
   OrderSummaryMap,
@@ -25,7 +27,7 @@ import { ConfirmModal } from './customers/ConfirmModal';
 import { CustomerCard } from './customers/CustomerCard';
 import { CustomerFormModal } from './customers/CustomerFormModal';
 
-const filterOptions = ['all', 'active', 'inactive'] as const;
+const filterOptions: CustomerFilterOption[] = ['all', 'active', 'inactive'];
 
 export function Customers() {
   const CUSTOMER_STATS_PAGE_SIZE = 100;
@@ -230,7 +232,7 @@ export function Customers() {
     try {
       const name = formState.values.name.trim();
       const email = formState.values.email.trim();
-      const phoneNumber = formState.values.phone.trim();
+      const phoneNumber = normalizeDigits(formState.values.phone);
       const adress = buildAddress(formState.values);
       const document = formState.values.document.trim();
 
@@ -411,8 +413,8 @@ export function Customers() {
       <NervLoader
         variant="customers"
         fullScreen
-        label={t('Synchronizing EVA-01')}
-        subtitle={t('LCL circulation nominal | Loading customers...')}
+        label={t('Loading')}
+        subtitle={t('Fetching customer data...')}
       />
     );
   }
@@ -421,137 +423,85 @@ export function Customers() {
     <>
       <ScrollView style={styles.container}>
         <View style={[styles.content, { padding: contentPadding }]}>
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.neonGreen }, isCompact && styles.titleCompact]}>
-              {t('CUSTOMER MANAGEMENT')}
-            </Text>
-            <Text
-              style={[styles.subtitle, { color: colors.textSecondary }, isCompact && styles.subtitleCompact]}
-            >
-              {t('Track and manage customer relationships')}
-            </Text>
-            <View style={[styles.headerLine, { backgroundColor: colors.primaryPurple }]} />
+          <View style={[styles.header, !isCompact && styles.headerRow]}>
+            <View>
+              <Text style={[styles.title, { color: colors.textPrimary }, isCompact && styles.titleCompact]}>
+                {t('Customers')}
+              </Text>
+              <Text
+                style={[styles.subtitle, { color: colors.textMuted }, isCompact && styles.subtitleCompact]}
+              >
+                {`${customerStats.total} ${t('accounts')}`}
+              </Text>
+            </View>
+            {!isCompact && (
+              <View style={styles.headerActions}>
+                <Button
+                  mode="outlined"
+                  onPress={() => setPageNumber(1)}
+                  textColor={colors.textSecondary}
+                  icon={({ size }) => <Feather name="download" size={size} color={colors.textSecondary} />}
+                  style={[styles.headerBtnOutlined, { borderColor: colors.cardBorder }]}
+                  contentStyle={styles.headerBtnContent}
+                >
+                  {t('Export')}
+                </Button>
+                {canManageCustomers && (
+                  <Button
+                    mode="contained"
+                    onPress={() => openCreate()}
+                    icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
+                    buttonColor={colors.primaryPurple}
+                    textColor="#fff"
+                    style={styles.headerBtn}
+                    contentStyle={styles.headerBtnContent}
+                  >
+                    {t('Add Customer')}
+                  </Button>
+                )}
+              </View>
+            )}
           </View>
 
-          <View style={[styles.statsContainer, isCompact && styles.statsContainerCompact]}>
-            <Card
-              mode="outlined"
-              style={[
-                styles.statBox,
-                { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-                isCompact && styles.statBoxCompact,
-              ]}
-            >
-              <View style={[styles.statBoxContent, isCompact && styles.statBoxContentCompact]}>
-                <Text style={[styles.statValue, { color: colors.textPrimary }]}>{customerStats.total}</Text>
-                <Text
-                  style={[styles.statLabel, { color: colors.textSecondary }, isCompact && styles.statLabelCompact]}
-                >
-                  {t('Total Customers')}
-                </Text>
-              </View>
-            </Card>
-
-            <Card
-              mode="outlined"
-              style={[
-                styles.statBox,
-                { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-                isCompact && styles.statBoxCompact,
-              ]}
-            >
-              <View style={[styles.statBoxContent, isCompact && styles.statBoxContentCompact]}>
-                <Text style={[styles.statValue, { color: colors.textPrimary }]}>{customerStats.active}</Text>
-                <Text
-                  style={[styles.statLabel, { color: colors.textSecondary }, isCompact && styles.statLabelCompact]}
-                >
-                  {t('Active')}
-                </Text>
-              </View>
-            </Card>
-
-            <Card
-              mode="outlined"
-              style={[
-                styles.statBox,
-                { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder },
-                isCompact && styles.statBoxCompact,
-              ]}
-            >
-              <View style={[styles.statBoxContent, isCompact && styles.statBoxContentCompact]}>
-                <Text style={[styles.statValue, { color: colors.textPrimary }]}>{customerStats.inactive}</Text>
-                <Text
-                  style={[styles.statLabel, { color: colors.textSecondary }, isCompact && styles.statLabelCompact]}
-                >
-                  {t('Inactive')}
-                </Text>
-              </View>
-            </Card>
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
-            {filterOptions.map((status) => {
-              const isSelected = filterStatus === status;
-              return (
-                <Chip
-                  key={status}
-                  selected={isSelected}
-                  showSelectedCheck={false}
-                  icon={
-                    isSelected
-                      ? ({ size }) => (
-                          <Feather name="check" size={Math.max(12, size - 2)} color={colors.neonGreen} />
-                        )
-                      : undefined
-                  }
-                  onPress={() => setFilterStatus(status)}
-                  style={[
-                    styles.filterButton,
-                    {
-                      backgroundColor: isSelected ? colors.primaryPurple : colors.cardBgFrom,
-                      borderColor: isSelected ? colors.primaryPurple : colors.cardBorder,
-                    },
-                  ]}
-                  textStyle={[
-                    styles.filterText,
-                    { color: isSelected ? colors.neonGreen : colors.textSecondary },
-                  ]}
-                >
-                  {status === 'all' ? t('All') : status === 'active' ? t('Active') : t('Inactive')}
-                </Chip>
-              );
-            })}
-          </ScrollView>
-
-          <View style={[styles.actionRow, isCompact && styles.actionRowCompact]}>
+          <View style={styles.searchContainer}>
             <Searchbar
-              placeholder={t('Search by name, email, or document...')}
+              placeholder={t('Search customers...')}
               value={searchTerm}
               onChangeText={setSearchTerm}
-              style={[styles.searchBar, { backgroundColor: colors.inputBgFrom }]}
+              style={[styles.searchBar, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
               iconColor={colors.primaryPurple}
               inputStyle={[styles.searchInput, { color: colors.textPrimary }]}
               placeholderTextColor={colors.textMuted}
             />
+          </View>
 
+          <View style={styles.filterRow}>
+            <SegmentedControl
+              options={filterOptions}
+              selected={filterStatus}
+              onSelect={setFilterStatus}
+              labelFn={(v) => v === 'all' ? t('All') : v === 'active' ? t('Active') : t('Inactive')}
+            />
+          </View>
+
+          {isCompact && canManageCustomers && (
             <Button
               mode="contained"
               onPress={openCreate}
               disabled={!isAuthenticated || authLoading}
               icon={({ size }) => <Feather name="plus" size={size} color={colors.neonGreen} />}
               buttonColor={colors.primaryPurple}
-              textColor={colors.appBg}
+              textColor="#fff"
               style={[
-                styles.addButton,
-                isCompact && styles.addButtonCompact,
+                styles.addButtonCompact,
                 (!isAuthenticated || authLoading) && styles.buttonDisabled,
               ]}
-              contentStyle={[styles.addButtonContent, isCompact && styles.addButtonContentCompact]}
+              contentStyle={styles.addButtonContent}
               labelStyle={styles.addButtonLabel}
             >
-              {t('Add')}
+              {t('Add Customer')}
             </Button>
-          </View>
+          )}
 
           <View style={[styles.paginationRow, isCompact && styles.paginationRowCompact]}>
             <Button
@@ -654,6 +604,7 @@ export function Customers() {
         isCompact={isCompact}
         isTablet={isTablet}
         colors={colors}
+        errorMessage={errorMessage}
         onClose={closeForm}
         onSubmit={handleFormSubmit}
         onFieldChange={setFormField}
@@ -685,39 +636,51 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   header: {
-    marginBottom: 24,
+    marginBottom: 20,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerBtn: {
+    borderRadius: 8,
+  },
+  headerBtnOutlined: {
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerBtnContent: {
+    paddingHorizontal: 14,
+    paddingVertical: 5,
   },
   title: {
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    marginBottom: 6,
-    lineHeight: 36,
-  },
-  titleCompact: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.2,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginBottom: 4,
     lineHeight: 30,
   },
+  titleCompact: {
+    fontSize: 20,
+  },
   subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 10,
+    fontSize: 14,
+    lineHeight: 20,
   },
   subtitleCompact: {
     fontSize: 13,
     lineHeight: 18,
   },
-  headerLine: {
-    height: 6,
-    width: 132,
-    borderRadius: 999,
-  },
   banner: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
   },
@@ -726,7 +689,7 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     gap: 8,
@@ -740,68 +703,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
   },
-  statsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 24,
-    flexWrap: 'wrap',
-  },
-  statsContainerCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 10,
-  },
-  statBox: {
-    flex: 1,
-    borderRadius: 8,
-  },
-  statBoxCompact: {
-    width: '100%',
-    flex: 0,
-    minHeight: 72,
-  },
-  statBoxContent: {
-    padding: 16,
-    alignItems: 'center',
-  },
-  statBoxContentCompact: {
-    alignItems: 'flex-start',
-  },
-  statValue: {
-    fontSize: 24,
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-  },
-  statLabelCompact: {
-    textAlign: 'left',
-    width: '100%',
-  },
-  filterContainer: {
+  filterRow: {
     marginBottom: 16,
   },
-  filterButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    marginRight: 10,
-    minHeight: 40,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
+  searchContainer: {
+    marginBottom: 20,
   },
-  filterText: {
-    fontSize: 13,
+  searchBar: {
+    borderRadius: 8,
+    minHeight: 44,
+    borderWidth: 1,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+  },
+  addButtonCompact: {
+    width: '100%',
+    minHeight: 44,
+    borderRadius: 10,
+    marginBottom: 16,
+  },
+  addButtonContent: {
+    paddingHorizontal: 18,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonLabel: {
+    fontSize: 14,
     fontWeight: '600',
   },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 24,
-  },
-  actionRowCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
+  buttonDisabled: {
+    opacity: 0.6,
   },
   paginationRow: {
     flexDirection: 'row',
@@ -828,41 +762,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  searchBar: {
-    flex: 1,
-    borderRadius: 16,
-    minHeight: 50,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-  },
-  addButton: {
-    borderRadius: 14,
-    minHeight: 50,
-  },
-  addButtonContent: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addButtonContentCompact: {
-    paddingVertical: 6,
-  },
-  addButtonLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  addButtonCompact: {
-    width: '100%',
-    minHeight: 44,
-    borderRadius: 10,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
   customerList: {
-    gap: 16,
+    gap: 12,
+    marginTop: 4,
   },
 });

@@ -30,7 +30,10 @@ export const formatCurrency = (amount: number, currency?: string | null) => {
   const numeric = Number.isFinite(amount) ? amount : 0;
   const code = normalizeCurrencyCode(currency) ?? 'BRL';
   const symbol = getCurrencySymbol(code);
-  const formatted = numeric.toFixed(2);
+  const formatted = numeric.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
   if (symbol === code) {
     return `${code} ${formatted}`;
   }

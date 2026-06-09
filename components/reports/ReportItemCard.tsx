@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Button, Card, Text } from '../ui/Paper';
+import { Button, Text } from '../ui/Paper';
 import { Report as ReportModel } from '../../services/erpService';
 import { CustomerColors } from '../customers/types';
 import { formatUsDateTime } from '../../utils/datetime';
@@ -16,11 +16,8 @@ interface ReportItemCardProps {
 export function ReportItemCard({ report, colors, isCompact }: ReportItemCardProps) {
   const { t } = useI18n();
   return (
-    <Card
-      mode="outlined"
-      style={[styles.reportCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
-    >
-      <Card.Content style={styles.reportCardContent}>
+    <View style={[styles.reportCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}>
+      <View style={styles.reportCardContent}>
         <View style={styles.reportHeader}>
           <View style={[styles.reportIcon, { backgroundColor: `${colors.primaryPurple}20` }]}>
             <Feather name={report.icon as any} size={24} color={colors.primaryPurple} />
@@ -52,7 +49,7 @@ export function ReportItemCard({ report, colors, isCompact }: ReportItemCardProp
             onPress={() => undefined}
             icon={({ size }) => <Feather name="eye" size={size} color={colors.neonGreen} />}
             buttonColor={colors.primaryPurple}
-            textColor={colors.neonGreen}
+            textColor="#fff"
             style={styles.actionButton}
             contentStyle={styles.actionButtonContent}
           >
@@ -69,14 +66,15 @@ export function ReportItemCard({ report, colors, isCompact }: ReportItemCardProp
             {t('Export')}
           </Button>
         </View>
-      </Card.Content>
-    </Card>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   reportCard: {
     borderRadius: 10,
+    borderWidth: 1,
   },
   reportCardContent: {
     gap: 14,

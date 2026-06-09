@@ -11,6 +11,7 @@ interface UseDashboardDataParams {
   isAuthenticated: boolean;
   authLoading: boolean;
   enterpriseId: string | null;
+  refreshKey?: number;
 }
 
 export function useDashboardData({
@@ -18,6 +19,7 @@ export function useDashboardData({
   isAuthenticated,
   authLoading,
   enterpriseId,
+  refreshKey = 0,
 }: UseDashboardDataParams) {
   const DASHBOARD_PAGE_SIZE = 100;
   const DASHBOARD_MAX_PAGES = 25;
@@ -149,7 +151,7 @@ export function useDashboardData({
     return () => {
       active = false;
     };
-  }, [erpService, isAuthenticated, authLoading, enterpriseId]);
+  }, [erpService, isAuthenticated, authLoading, enterpriseId, refreshKey]);
 
   return { products, orders, customers, loading, errorMessage };
 }

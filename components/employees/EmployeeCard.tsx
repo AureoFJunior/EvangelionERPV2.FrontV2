@@ -1,10 +1,12 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Avatar, Card, Chip, IconButton, Text } from '../ui/Paper';
+import { Text } from '../ui/Paper';
 import { CustomerColors } from '../customers/types';
 import { EmployeeRecord } from '../../utils/employees/data';
 import { useI18n } from '../../contexts/I18nContext';
+import { Avatar } from '../Avatar';
+import { StatusBadge } from '../StatusBadge';
 
 interface EmployeeCardProps {
   employee: EmployeeRecord;
@@ -15,154 +17,79 @@ interface EmployeeCardProps {
 export function EmployeeCard({ employee, colors, isCompact }: EmployeeCardProps) {
   const { t } = useI18n();
   return (
-    <Card
-      mode="outlined"
-      style={[styles.employeeCard, { backgroundColor: colors.cardBgFrom, borderColor: colors.cardBorder }]}
+    <Pressable
+      style={(state: any) => [
+        styles.card,
+        {
+          backgroundColor: colors.cardBgFrom,
+          borderColor: colors.cardBorder,
+        },
+        !isCompact && styles.cardTablet,
+        state.hovered && { borderColor: `${colors.primaryPurple}33` },
+      ]}
     >
-      <Card.Content style={styles.employeeCardContent}>
-        <View style={styles.employeeHeader}>
-          <Avatar.Image
-            source={{ uri: employee.image }}
-            size={isCompact ? 72 : 80}
-            style={[styles.photo, { borderColor: colors.neonGreen }]}
-          />
-          <View
-            style={[
-              styles.statusDot,
-              { backgroundColor: colors.neonGreen, borderColor: colors.cardBgFrom },
-            ]}
-          />
+      <Avatar name={employee.name} imageUri={employee.image} size="md" />
+      <View style={styles.info}>
+        <View style={styles.nameRow}>
+          <Text style={[styles.name, { color: colors.textPrimary }]} numberOfLines={1}>
+            {employee.name}
+          </Text>
+          {employee.status.toLowerCase() !== 'active' && <StatusBadge status={employee.status} />}
         </View>
-
-        <View style={styles.employeeInfo}>
-          <Text style={[styles.employeeName, { color: colors.textPrimary }]}>{employee.name}</Text>
-          <Text style={[styles.employeeRole, { color: colors.primaryPurple }]}>{t(employee.role)}</Text>
-          <Chip
-            style={[styles.departmentBadge, { backgroundColor: `${colors.primaryPurple}20` }]}
-            textStyle={[styles.departmentText, { color: colors.primaryPurple }]}
-          >
-            {t(employee.department)}
-          </Chip>
+        <Text style={[styles.role, { color: colors.textMuted }]} numberOfLines={1}>
+          {t(employee.role)}
+        </Text>
+        <View style={styles.emailRow}>
+          <Feather name="mail" size={10} color={colors.textMuted} />
+          <Text style={[styles.email, { color: colors.textMuted }]} numberOfLines={1}>
+            {employee.email}
+          </Text>
         </View>
-
-        <View style={styles.contactInfo}>
-          <View style={styles.contactRow}>
-            <Feather name="mail" size={12} color={colors.primaryPurple} />
-            <Text style={[styles.contactText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {employee.email}
-            </Text>
-          </View>
-          <View style={styles.contactRow}>
-            <Feather name="phone" size={12} color={colors.primaryPurple} />
-            <Text style={[styles.contactText, { color: colors.textSecondary }]}>{employee.phone}</Text>
-          </View>
-          <View style={styles.contactRow}>
-            <Feather name="map-pin" size={12} color={colors.primaryPurple} />
-            <Text style={[styles.contactText, { color: colors.textSecondary }]}>{employee.location}</Text>
-          </View>
-        </View>
-
-        <View style={styles.employeeFooter}>
-          <Chip
-            compact={isCompact}
-            style={[
-              styles.statusBadge,
-              isCompact && styles.statusBadgeCompact,
-              { backgroundColor: `${colors.neonGreen}20` },
-            ]}
-            textStyle={[
-              styles.statusText,
-              isCompact && styles.statusTextCompact,
-              { color: colors.neonGreen },
-            ]}
-          >
-            {t(employee.status)}
-          </Chip>
-          <IconButton
-            icon={() => <Feather name="briefcase" size={16} color={colors.primaryPurple} />}
-            size={18}
-          />
-        </View>
-      </Card.Content>
-    </Card>
+      </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  employeeCard: {
-    borderRadius: 8,
-  },
-  employeeCardContent: {
-    alignItems: 'center',
-    padding: 20,
-  },
-  employeeHeader: {
-    position: 'relative',
-    marginBottom: 16,
-  },
-  photo: {
-    borderWidth: 2,
-  },
-  statusDot: {
-    position: 'absolute',
-    bottom: 4,
-    right: 4,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    borderWidth: 2,
-  },
-  employeeInfo: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  employeeName: {
-    fontSize: 18,
-    marginBottom: 4,
-    textAlign: 'center',
-  },
-  employeeRole: {
-    fontSize: 14,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  departmentBadge: {
+  card: {
     borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    ...Platform.select({ web: { transition: 'border-color 0.15s ease', cursor: 'pointer' } as any, default: {} }),
   },
-  departmentText: {
-    fontSize: 11,
+  cardTablet: {
+    flex: 1,
+    minWidth: 240,
   },
-  contactInfo: {
-    width: '100%',
-    marginBottom: 16,
-    gap: 8,
+  info: {
+    flex: 1,
+    minWidth: 0,
   },
-  contactRow: {
+  nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  contactText: {
+  name: {
+    fontSize: 14,
+    fontWeight: '500',
+    flexShrink: 1,
+  },
+  role: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  emailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  email: {
     fontSize: 12,
     flex: 1,
-  },
-  employeeFooter: {
-    width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  statusBadge: {
-    borderRadius: 999,
-  },
-  statusBadgeCompact: {
-    paddingHorizontal: 10,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  statusTextCompact: {
-    fontSize: 10,
   },
 });

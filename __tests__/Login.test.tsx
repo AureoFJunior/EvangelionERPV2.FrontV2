@@ -18,6 +18,13 @@ jest.mock('../hooks/useResponsive', () => ({
   useResponsive: jest.fn(),
 }));
 
+jest.mock('../contexts/I18nContext', () => ({
+  useI18n: () => ({
+    language: 'en',
+    t: (key: string) => key,
+  }),
+}));
+
 const mockedUseAuth = useAuth as jest.Mock;
 const mockedUseTheme = useTheme as jest.Mock;
 const mockedUseResponsive = useResponsive as jest.Mock;

@@ -69,5 +69,5 @@ export function useReportsData({ erpService, isAuthenticated, authLoading }: Use
     }).length;
   }, [reports]);
 
-  return { reports, loading, errorMessage, reportsThisMonth, reportsToday };
+  return { reports, setReports, loading, errorMessage, reportsThisMonth, reportsToday };
 }

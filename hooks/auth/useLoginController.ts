@@ -58,7 +58,14 @@ export function useLoginController({
     try {
       await login({ username, password });
     } catch (err: any) {
-      setError(err?.message ?? 'Login failed');
+      const msg = err?.message ?? '';
+      const isCredentialError =
+        /unable to authenticate|unauthorized|invalid|401|credentials/i.test(msg);
+      setError(
+        isCredentialError
+          ? 'Invalid username or password. Please check your credentials and try again.'
+          : msg || 'Login failed. Please try again.',
+      );
     } finally {
       setSubmitting(false);
       setSubmittingMode(null);
