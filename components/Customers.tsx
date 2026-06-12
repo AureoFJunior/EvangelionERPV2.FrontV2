@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Button, Searchbar } from './ui/Paper';
@@ -12,13 +12,13 @@ import { useCustomers } from '../hooks/customers/useCustomers';
 import { useOrderSummary } from '../hooks/customers/useOrderSummary';
 import { useCepLookup } from '../hooks/customers/useCepLookup';
 import { useCustomerForm } from '../hooks/customers/useCustomerForm';
+import { useCustomerStats } from '../hooks/customers/useCustomerStats';
 import { buildAddress } from '../utils/customers/address';
 import { normalizeDigits } from '../utils/customers/validation';
 import {
   CustomerFilterOption,
   OrderSummaryMap,
   filterCustomers,
-  getCustomerStats,
   mapCustomersToCardData,
 } from '../utils/customers/presentation';
 import { hasManagementAccess } from '../utils/access';
@@ -30,8 +30,6 @@ import { CustomerFormModal } from './customers/CustomerFormModal';
 const filterOptions: CustomerFilterOption[] = ['all', 'active', 'inactive'];
 
 export function Customers() {
-  const CUSTOMER_STATS_PAGE_SIZE = 100;
-  const CUSTOMER_STATS_MAX_PAGES = 50;
   const { colors } = useTheme();
   const { t } = useI18n();
   const { client, isAuthenticated, loading: authLoading, enterpriseId, currency, user } = useAuth();
@@ -68,10 +66,14 @@ export function Customers() {
 
   const [filterStatus, setFilterStatus] = useState<CustomerFilterOption>('active');
   const [deactivatingId, setDeactivatingId] = useState<CustomerModel['id'] | null>(null);
-  const [confirmCustomer, setConfirmCustomer] = useState<CustomerModel | null>(null);
-  const [confirmName, setConfirmName] = useState('');
-  const [globalCustomerStats, setGlobalCustomerStats] = useState(() => getCustomerStats([]));
-  const [customerStatsRefreshKey, setCustomerStatsRefreshKey] = useState(0);
+  const [confirmTarget, setConfirmTarget] = useState<{ customer: CustomerModel; name: string } | null>(null);
+
+  const { stats: customerStats, refreshStats } = useCustomerStats({
+    erpService,
+    isAuthenticated,
+    authLoading,
+    enterpriseId,
+  });
 
   const {
     formState,
@@ -101,86 +103,6 @@ export function Customers() {
       setPageNumber((prev) => prev + 1);
     }
   }, [hasMore, setPageNumber]);
-
-  useEffect(() => {
-    let active = true;
-
-    const run = async () => {
-      if (!active) {
-        return;
-      }
-
-      if (!isAuthenticated || authLoading) {
-        setGlobalCustomerStats(getCustomerStats([]));
-        return;
-      }
-
-      const originalSetter = setGlobalCustomerStats;
-      const guardedSetter = (value: ReturnType<typeof getCustomerStats>) => {
-        if (active) {
-          originalSetter(value);
-        }
-      };
-
-      let page = 1;
-      const allCustomers: CustomerModel[] = [];
-      const seenIds = new Set<string>();
-
-      while (active && page <= CUSTOMER_STATS_MAX_PAGES) {
-        const response = await erpService.fetchCustomers(page, CUSTOMER_STATS_PAGE_SIZE, true, {
-          enterpriseId: enterpriseId ?? undefined,
-        });
-
-        if (!response.ok) {
-          break;
-        }
-
-        const rows = response.data ?? [];
-        if (rows.length === 0) {
-          break;
-        }
-
-        let addedRows = 0;
-        rows.forEach((customer, index) => {
-          const rawId = customer.id;
-          const key =
-            rawId !== undefined && rawId !== null && String(rawId).trim() !== ''
-              ? String(rawId)
-              : `page:${page}:idx:${index}`;
-
-          if (seenIds.has(key)) {
-            return;
-          }
-
-          seenIds.add(key);
-          allCustomers.push(customer);
-          addedRows += 1;
-        });
-
-        if (addedRows === 0) {
-          break;
-        }
-
-        page += 1;
-      }
-
-      guardedSetter(getCustomerStats(allCustomers));
-    };
-
-    run();
-
-    return () => {
-      active = false;
-    };
-  }, [
-    erpService,
-    isAuthenticated,
-    authLoading,
-    enterpriseId,
-    customerStatsRefreshKey,
-    CUSTOMER_STATS_MAX_PAGES,
-    CUSTOMER_STATS_PAGE_SIZE,
-  ]);
 
   const openCreate = useCallback(() => {
     if (!isAuthenticated || authLoading) {
@@ -263,7 +185,7 @@ export function Customers() {
           };
           const nextCustomer = response.data ?? fallbackCustomer;
           setCustomers((prev) => [nextCustomer, ...prev]);
-          setCustomerStatsRefreshKey((prev) => prev + 1);
+          refreshStats();
           closeForm();
           return;
         }
@@ -295,7 +217,7 @@ export function Customers() {
         setCustomers((prev) =>
           prev.map((item) => (item.id === formState.customer?.id ? { ...item, ...nextCustomer } : item)),
         );
-        setCustomerStatsRefreshKey((prev) => prev + 1);
+        refreshStats();
         closeForm();
         return;
       }
@@ -323,6 +245,7 @@ export function Customers() {
     setFormSubmitting,
     canManageCustomers,
     managementDeniedMessage,
+    refreshStats,
   ]);
 
   const requestDeactivate = useCallback(
@@ -340,15 +263,13 @@ export function Customers() {
         return;
       }
 
-      setConfirmCustomer(customer);
-      setConfirmName(displayName);
+      setConfirmTarget({ customer, name: displayName });
     },
     [isAuthenticated, authLoading, setErrorMessage, canManageCustomers, managementDeniedMessage],
   );
 
   const closeConfirm = useCallback(() => {
-    setConfirmCustomer(null);
-    setConfirmName('');
+    setConfirmTarget(null);
   }, []);
 
   const confirmDeactivate = useCallback(async () => {
@@ -358,6 +279,7 @@ export function Customers() {
       return;
     }
 
+    const confirmCustomer = confirmTarget?.customer;
     if (!confirmCustomer || confirmCustomer.id === undefined || confirmCustomer.id === null) {
       setErrorMessage(t('Customer id missing.'));
       closeConfirm();
@@ -377,7 +299,7 @@ export function Customers() {
               : item,
           ),
         );
-        setCustomerStatsRefreshKey((prev) => prev + 1);
+        refreshStats();
         closeConfirm();
       } else {
         setErrorMessage(response.error ?? t('Unable to deactivate customer'));
@@ -392,7 +314,7 @@ export function Customers() {
     } finally {
       setDeactivatingId(null);
     }
-  }, [confirmCustomer, setErrorMessage, closeConfirm, erpService, setCustomers, canManageCustomers, managementDeniedMessage]);
+  }, [confirmTarget, setErrorMessage, closeConfirm, erpService, setCustomers, canManageCustomers, managementDeniedMessage, refreshStats]);
 
   const filteredCustomers = useMemo(
     () => filterCustomers(customers, searchTerm, filterStatus),
@@ -403,8 +325,6 @@ export function Customers() {
     () => mapCustomersToCardData(filteredCustomers, orderSummary as OrderSummaryMap),
     [filteredCustomers, orderSummary],
   );
-
-  const customerStats = globalCustomerStats;
 
   const displayErrorMessage = errorMessage ?? orderSummaryError;
 
@@ -611,9 +531,9 @@ export function Customers() {
       />
 
       <ConfirmModal
-        visible={confirmCustomer !== null}
+        visible={confirmTarget !== null}
         title={t('Deactivate Customer')}
-        message={t('Deactivate {name}? They will no longer be active.', { name: confirmName || t('this customer') })}
+        message={t('Deactivate {name}? They will no longer be active.', { name: confirmTarget?.name || t('this customer') })}
         confirmLabel={t('Deactivate')}
         busy={deactivatingId !== null}
         isCompact={isCompact}
